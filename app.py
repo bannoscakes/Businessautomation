@@ -53,10 +53,18 @@ def save_templates(tool_name, templates):
     with open(path, 'w') as f:
         json.dump(templates, f, indent=4)
 
-def save_processed_file(df, filename):
-    """Save processed DataFrame to the saved_files directory."""
+def save_processed_file(df, filename, driver_name=None):
+    """Save processed DataFrame to the saved_files directory with optional driver name."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    safe_filename = f"{filename}_{timestamp}.xlsx"
+    
+    # Create a descriptive filename with driver name if available
+    if driver_name:
+        # Clean driver name for filename
+        clean_driver_name = "".join(c for c in str(driver_name) if c.isalnum() or c in (" ", "-", "_")).strip().replace(" ", "_")
+        safe_filename = f"{filename}_{clean_driver_name}_{timestamp}.xlsx"
+    else:
+        safe_filename = f"{filename}_{timestamp}.xlsx"
+    
     filepath = os.path.join(SAVED_FILES_DIR, safe_filename)
     df.to_excel(filepath, index=False)
     return filepath
@@ -68,6 +76,51 @@ def get_saved_files():
     files = [f for f in os.listdir(SAVED_FILES_DIR) if f.endswith(('.xlsx', '.csv'))]
     files.sort(reverse=True)
     return files
+
+def format_saved_file_display(filename):
+    """Format saved file name for better display with driver name extraction."""
+    # Remove extension
+    name_without_ext = filename.replace('.xlsx', '').replace('.csv', '')
+    
+    # Try to extract driver name if present
+    # Expected format: driver_run_sheet_DriverName_YYYYMMDD_HHMMSS
+    parts = name_without_ext.split('_')
+    
+    if len(parts) >= 4 and 'driver' in name_without_ext.lower():
+        try:
+            # Find the timestamp (last two parts should be date and time)
+            date_part = parts[-2]  # YYYYMMDD
+            time_part = parts[-1]  # HHMMSS
+            
+            # Check if these look like timestamp parts
+            if (len(date_part) == 8 and date_part.isdigit() and 
+                len(time_part) == 6 and time_part.isdigit()):
+                
+                # Extract driver name (everything between 'sheet' and timestamp)
+                sheet_index = None
+                for i, part in enumerate(parts):
+                    if 'sheet' in part.lower():
+                        sheet_index = i
+                        break
+                
+                if sheet_index is not None and sheet_index + 1 < len(parts) - 2:
+                    driver_parts = parts[sheet_index + 1:-2]
+                    driver_name = ' '.join(driver_parts).replace('_', ' ').title()
+                    
+                    # Format timestamp for display
+                    try:
+                        date_obj = datetime.strptime(date_part + time_part, '%Y%m%d%H%M%S')
+                        formatted_date = date_obj.strftime('%m/%d/%Y %I:%M %p')
+                        
+                        return f"🚛 {driver_name} - {formatted_date}"
+                    except:
+                        return f"🚛 {driver_name} - {date_part}_{time_part}"
+        except:
+            pass
+    
+    # Fallback to basic formatting
+    formatted = name_without_ext.replace('_', ' ').title()
+    return f"📄 {formatted}"
 
 def load_saved_file(filename):
     """Load a saved file as DataFrame."""
@@ -99,8 +152,19 @@ def pdf_label_numbering_tool():
     
     st.markdown("---")
     
+    # Initialize session state for persistent driver file and column mappings
     if 'loaded_driver_df' not in st.session_state:
         st.session_state.loaded_driver_df = None
+    if 'pdf_stop_column' not in st.session_state:
+        st.session_state.pdf_stop_column = None
+    if 'pdf_order_column' not in st.session_state:
+        st.session_state.pdf_order_column = None
+    if 'pdf_driver_column' not in st.session_state:
+        st.session_state.pdf_driver_column = None
+    if 'pdf_selected_driver' not in st.session_state:
+        st.session_state.pdf_selected_driver = None
+    if 'pdf_use_driver_filter' not in st.session_state:
+        st.session_state.pdf_use_driver_filter = False
     
     settings_file = os.path.join(TEMPLATE_DIR, "pdf_label_settings.json")
     default_settings = {
@@ -116,82 +180,120 @@ def pdf_label_numbering_tool():
     else:
         saved_settings = default_settings
     
-    st.subheader("1️⃣ Get Driver Run Sheet")
+    st.subheader("1️⃣ Driver Run Sheet")
     
-    tab1, tab2 = st.tabs(["📤 Upload New File", "💾 Use Saved File"])
-    
-    driver_df = None
-    
-    with tab1:
-        st.info("💡 Upload your processed run sheet with stop numbers and order numbers")
-        driver_file = st.file_uploader(
-            "Choose your driver run file",
-            type=['csv', 'xlsx', 'xls'],
-            key="pdf_driver_upload",
-            help="Excel file with stop orders and order reference numbers"
-        )
+    # Check if we already have a loaded driver file
+    if st.session_state.loaded_driver_df is not None:
+        df_info = st.session_state.loaded_driver_df
+        st.success(f"✅ **Driver file already loaded** ({len(df_info)} stops)")
         
-        if driver_file:
-            try:
-                if driver_file.name.endswith('.csv'):
-                    driver_df = pd.read_csv(driver_file)
-                else:
-                    excel_file = pd.ExcelFile(driver_file)
-                    sheet_name = excel_file.sheet_names[0]
-                    
-                    best_df = None
-                    best_unnamed_count = float('inf')
-                    
-                    for header_row in range(0, 5):
-                        temp_df = pd.read_excel(driver_file, sheet_name=sheet_name, header=header_row)
-                        unnamed_count = sum(1 for col in temp_df.columns if str(col).startswith('Unnamed:'))
-                        
-                        if unnamed_count < best_unnamed_count:
-                            best_unnamed_count = unnamed_count
-                            best_df = temp_df
-                        
-                        if unnamed_count == 0:
-                            break
-                    
-                    driver_df = best_df
-                
-                driver_df = driver_df.dropna(how='all')
-                st.session_state.loaded_driver_df = driver_df
-                st.success(f"✅ Loaded run sheet with {len(driver_df)} stops")
-                
-            except Exception as e:
-                st.error(f"❌ Error reading run sheet: {e}")
-    
-    with tab2:
-        saved_files = get_saved_files()
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            # Show a preview of the current file
+            with st.expander("📊 Current Driver Data Preview", expanded=False):
+                st.dataframe(df_info.head(10), use_container_width=True)
         
-        if saved_files:
-            st.info(f"💡 Found {len(saved_files)} saved file(s)")
+        with col2:
+            if st.button("🔄 Load Different File", use_container_width=True):
+                # Clear the current driver data to allow selecting a new one
+                st.session_state.loaded_driver_df = None
+                st.rerun()
             
-            selected_saved_file = st.selectbox(
-                "Select a previously saved run sheet:",
-                saved_files,
-                format_func=lambda x: f"{x.replace('_', ' ').replace('.xlsx', '').replace('.csv', '')}"
+            if st.button("🗑️ Clear All Settings", use_container_width=True, help="Reset column mappings and driver selections"):
+                # Clear all PDF tool settings
+                st.session_state.pdf_stop_column = None
+                st.session_state.pdf_order_column = None
+                st.session_state.pdf_driver_column = None
+                st.session_state.pdf_selected_driver = None
+                st.session_state.pdf_use_driver_filter = False
+                st.success("✅ All settings cleared!")
+                st.rerun()
+    else:
+        # Show the file selection interface only if no file is loaded
+        tab1, tab2 = st.tabs(["📤 Upload New File", "💾 Use Saved File"])
+        
+        driver_df = None
+        
+        with tab1:
+            st.info("💡 Upload your processed run sheet with stop numbers and order numbers")
+            driver_file = st.file_uploader(
+                "Choose your driver run file",
+                type=['csv', 'xlsx', 'xls'],
+                key="pdf_driver_upload",
+                help="Excel file with stop orders and order reference numbers"
             )
             
-            if st.button("📂 Load This File", use_container_width=True):
+            if driver_file:
                 try:
-                    driver_df = load_saved_file(selected_saved_file)
+                    if driver_file.name.endswith('.csv'):
+                        driver_df = pd.read_csv(driver_file)
+                    else:
+                        excel_file = pd.ExcelFile(driver_file)
+                        sheet_name = excel_file.sheet_names[0]
+                        
+                        best_df = None
+                        best_unnamed_count = float('inf')
+                        
+                        for header_row in range(0, 5):
+                            temp_df = pd.read_excel(driver_file, sheet_name=sheet_name, header=header_row)
+                            unnamed_count = sum(1 for col in temp_df.columns if str(col).startswith('Unnamed:'))
+                            
+                            if unnamed_count < best_unnamed_count:
+                                best_unnamed_count = unnamed_count
+                                best_df = temp_df
+                            
+                            if unnamed_count == 0:
+                                break
+                        
+                        driver_df = best_df
+                    
                     driver_df = driver_df.dropna(how='all')
                     st.session_state.loaded_driver_df = driver_df
-                    st.success(f"✅ Loaded saved file with {len(driver_df)} stops")
-                    st.rerun()
+                    st.success(f"✅ Loaded run sheet with {len(driver_df)} stops")
+                    
                 except Exception as e:
-                    st.error(f"❌ Error loading saved file: {e}")
-        else:
-            st.warning("⚠️ No saved files found. Process a run sheet first in 'Driver Run Sheet Processor'")
+                    st.error(f"❌ Error reading run sheet: {e}")
+        
+        with tab2:
+            saved_files = get_saved_files()
+            
+            if saved_files:
+                st.info(f"💡 Found {len(saved_files)} saved driver run sheet(s)")
+                
+                # Show a preview of available files
+                with st.expander("📋 Preview Available Files", expanded=False):
+                    for file in saved_files[:5]:  # Show first 5 files
+                        display_name = format_saved_file_display(file)
+                        st.write(f"• {display_name}")
+                    if len(saved_files) > 5:
+                        st.write(f"• ... and {len(saved_files) - 5} more files")
+                
+                selected_saved_file = st.selectbox(
+                    "Select a previously saved run sheet:",
+                    saved_files,
+                    format_func=format_saved_file_display,
+                    help="Files are sorted by date (newest first). Driver names are extracted when available."
+                )
+                
+                if st.button("📂 Load This File", use_container_width=True):
+                    try:
+                        driver_df = load_saved_file(selected_saved_file)
+                        driver_df = driver_df.dropna(how='all')
+                        st.session_state.loaded_driver_df = driver_df
+                        
+                        # Extract driver name from filename for display
+                        display_name = format_saved_file_display(selected_saved_file)
+                        clean_display = display_name.replace('🚛 ', '').replace('📄 ', '')
+                        
+                        st.success(f"✅ Loaded: **{clean_display}** ({len(driver_df)} stops)")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error loading saved file: {e}")
+            else:
+                st.warning("⚠️ No saved files found. Process a run sheet first in 'Driver Run Sheet Processor'")
     
-    if st.session_state.loaded_driver_df is not None:
-        driver_df = st.session_state.loaded_driver_df
-
-    if driver_df is not None and not driver_df.empty:
-        with st.expander("📊 Preview Run Sheet Data"):
-            st.dataframe(driver_df.head(10), use_container_width=True)
+    # Get the current driver dataframe for processing
+    driver_df = st.session_state.loaded_driver_df
     
     st.subheader("2️⃣ Upload Label PDF")
     st.info("💡 Upload the PDF with all labels (can be in any order)")
@@ -206,67 +308,168 @@ def pdf_label_numbering_tool():
     if driver_df is not None and label_pdf:
         st.markdown("---")
         
-        st.subheader("3️⃣ Map Your Columns")
+        st.subheader("3️⃣ Column Mapping")
         
-        col1, col2, col3 = st.columns(3)
-        
-        stop_default = None
-        order_default = None
-        
-        for i, col in enumerate(driver_df.columns):
-            col_lower = str(col).lower()
-            sample_values = driver_df[col].dropna().astype(str).head(3).tolist()
+        # Auto-detect columns if not previously set or if columns don't exist in current data
+        if (st.session_state.pdf_stop_column is None or 
+            st.session_state.pdf_stop_column not in driver_df.columns or
+            st.session_state.pdf_order_column is None or 
+            st.session_state.pdf_order_column not in driver_df.columns):
             
+            # Smart auto-detection for first time or when columns are missing
+            stop_default = None
+            order_default = None
+            
+            for col in driver_df.columns:
+                col_lower = str(col).lower()
+                sample_values = driver_df[col].dropna().astype(str).head(5).tolist()
+                
+                # Detect stop numbers (should be small sequential numbers like 1,2,3,4,5)
+                if stop_default is None:
+                    try:
+                        numeric_values = []
+                        for v in sample_values:
+                            clean_v = str(v).strip()
+                            if clean_v.replace('.','').isdigit():
+                                numeric_values.append(float(clean_v))
+                        
+                        if len(numeric_values) >= 3:
+                            avg_val = sum(numeric_values) / len(numeric_values)
+                            max_val = max(numeric_values)
+                            # Stop numbers should be small (under 50) and sequential-ish
+                            if max_val < 50 and avg_val < 20 and ('stop' in col_lower or 'order' in col_lower):
+                                stop_default = col
+                    except:
+                        pass
+                
+                # Detect order reference (longer alphanumeric strings)
+                if order_default is None:
+                    if ('ref' in col_lower or 'order' in col_lower or 'number' in col_lower):
+                        # Check if values look like order numbers (longer strings)
+                        long_values = [v for v in sample_values if len(str(v).strip()) > 3]
+                        if len(long_values) >= 2:  # At least 2 samples with longer values
+                            order_default = col
+            
+            # Fallback logic if auto-detection didn't work
             if stop_default is None:
-                try:
-                    numeric_count = sum(1 for v in sample_values if v.replace('.','').isdigit())
-                    if numeric_count >= 2:
-                        avg_val = sum(float(v) for v in sample_values if v.replace('.','').isdigit()) / numeric_count
-                        if avg_val < 100:
-                            stop_default = i
-                except:
-                    pass
+                # Look for columns with small numeric values
+                for col in driver_df.columns:
+                    sample_values = driver_df[col].dropna().astype(str).head(5).tolist()
+                    try:
+                        numeric_values = [float(v) for v in sample_values if str(v).replace('.','').isdigit()]
+                        if len(numeric_values) >= 2:
+                            max_val = max(numeric_values)
+                            if max_val < 100:  # Likely stop numbers
+                                stop_default = col
+                                break
+                    except:
+                        continue
+                        
+                if stop_default is None:
+                    stop_default = driver_df.columns[0]
             
-            if order_default is None and ('ref' in col_lower or 'order' in col_lower):
-                order_default = i
+            if order_default is None:
+                # Find a column that's different from stop_default
+                for col in driver_df.columns:
+                    if col != stop_default:
+                        order_default = col
+                        break
+                        
+                if order_default is None:
+                    order_default = driver_df.columns[min(len(driver_df.columns) - 1, 1)]
+                
+            # Set the detected columns
+            st.session_state.pdf_stop_column = stop_default
+            st.session_state.pdf_order_column = order_default
+            
+            st.success(f"✅ **Auto-detected columns:** Stop Numbers = '{stop_default}', Order Reference = '{order_default}'")
+        else:
+            st.info(f"📌 **Using saved column mapping:** Stop Numbers = '{st.session_state.pdf_stop_column}', Order Reference = '{st.session_state.pdf_order_column}'")
         
-        if stop_default is None:
-            stop_default = 0
-        if order_default is None:
-            order_default = min(len(driver_df.columns) - 1, 1)
-        
-        with col1:
-            st.markdown("**🔢 Stop Numbers**")
-            stop_col = st.selectbox(
-                "Column with route order (1, 2, 3...)",
-                driver_df.columns,
-                index=stop_default,
-                key="pdf_stop"
-            )
-            st.caption(f"Sample: {driver_df[stop_col].head(3).tolist()}")
-        
-        with col2:
-            st.markdown("**📦 Order Reference**")
-            order_col = st.selectbox(
-                "Column with order numbers/IDs",
-                driver_df.columns,
-                index=order_default,
-                key="pdf_order"
-            )
-            st.caption(f"Sample: {driver_df[order_col].head(3).tolist()}")
-        
-        with col3:
-            st.markdown("**👤 Driver Filter (optional)**")
-            has_driver_col = st.checkbox("Filter by driver?", value=False)
-            if has_driver_col:
-                driver_col = st.selectbox(
-                    "Driver name column",
+        # Show current mapping with option to change
+        with st.expander("🔧 Adjust Column Mapping (if needed)", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("**🔢 Stop Numbers**")
+                stop_col = st.selectbox(
+                    "Column with route order (1, 2, 3...)",
                     driver_df.columns,
-                    key="pdf_driver"
+                    index=list(driver_df.columns).index(st.session_state.pdf_stop_column),
+                    key="pdf_stop_selector"
                 )
-                unique_drivers = driver_df[driver_col].unique()
-                selected_driver = st.selectbox("Select driver:", unique_drivers)
-                driver_df = driver_df[driver_df[driver_col] == selected_driver]
+                st.caption(f"Sample: {driver_df[stop_col].head(3).tolist()}")
+                
+                # Update session state if changed
+                if stop_col != st.session_state.pdf_stop_column:
+                    st.session_state.pdf_stop_column = stop_col
+            
+            with col2:
+                st.markdown("**📦 Order Reference**")
+                order_col = st.selectbox(
+                    "Column with order numbers/IDs",
+                    driver_df.columns,
+                    index=list(driver_df.columns).index(st.session_state.pdf_order_column),
+                    key="pdf_order_selector"
+                )
+                st.caption(f"Sample: {driver_df[order_col].head(3).tolist()}")
+                
+                # Update session state if changed
+                if order_col != st.session_state.pdf_order_column:
+                    st.session_state.pdf_order_column = order_col
+            
+            with col3:
+                st.markdown("**👤 Driver Filter (optional)**")
+                has_driver_col = st.checkbox(
+                    "Filter by driver?", 
+                    value=st.session_state.pdf_use_driver_filter,
+                    key="pdf_use_driver_filter_checkbox"
+                )
+                # Update session state only if it changed
+                if has_driver_col != st.session_state.pdf_use_driver_filter:
+                    st.session_state.pdf_use_driver_filter = has_driver_col
+                
+                if has_driver_col:
+                    # Auto-detect driver column if not set
+                    if st.session_state.pdf_driver_column is None or st.session_state.pdf_driver_column not in driver_df.columns:
+                        driver_col_options = [col for col in driver_df.columns if 'driver' in str(col).lower() or 'member' in str(col).lower() or 'assigned' in str(col).lower()]
+                        if driver_col_options:
+                            st.session_state.pdf_driver_column = driver_col_options[0]
+                        else:
+                            st.session_state.pdf_driver_column = driver_df.columns[0]
+                    
+                    driver_col = st.selectbox(
+                        "Driver name column",
+                        driver_df.columns,
+                        index=list(driver_df.columns).index(st.session_state.pdf_driver_column),
+                        key="pdf_driver_selector"
+                    )
+                    
+                    if driver_col != st.session_state.pdf_driver_column:
+                        st.session_state.pdf_driver_column = driver_col
+                        st.session_state.pdf_selected_driver = None  # Reset selected driver
+                    
+                    unique_drivers = driver_df[driver_col].unique()
+                    
+                    # Auto-select previous driver if still available
+                    driver_index = 0
+                    if st.session_state.pdf_selected_driver in unique_drivers:
+                        driver_index = list(unique_drivers).index(st.session_state.pdf_selected_driver)
+                    
+                    selected_driver = st.selectbox(
+                        "Select driver:", 
+                        unique_drivers,
+                        index=driver_index,
+                        key="pdf_selected_driver_selector"
+                    )
+                    st.session_state.pdf_selected_driver = selected_driver
+                    
+                    # Filter the dataframe by selected driver
+                    driver_df = driver_df[driver_df[driver_col] == selected_driver]
+        
+        # Use the stored column selections
+        stop_col = st.session_state.pdf_stop_column
+        order_col = st.session_state.pdf_order_column
         
         st.markdown("---")
         
@@ -794,8 +997,39 @@ def file_processor_tool(tool_name):
                         if tool_name == DRIVER_KEY:
                             if st.button("💾 Save for PDF Labeling", use_container_width=True, type="primary"):
                                 try:
-                                    saved_path = save_processed_file(processed_df, "driver_run_sheet")
-                                    st.success(f"✅ Saved! You can now use this in 'PDF Label Numbering' → 'Use Saved File'")
+                                    # Try to detect driver name from the data
+                                    driver_name = None
+                                    
+                                    # Look for common driver-related column names
+                                    driver_columns = [col for col in processed_df.columns 
+                                                    if any(keyword in col.lower() for keyword in 
+                                                          ['driver', 'assigned', 'member', 'name', 'user'])]
+                                    
+                                    if driver_columns:
+                                        # Use the first driver column found and get unique non-null values
+                                        driver_col = driver_columns[0]
+                                        unique_drivers = processed_df[driver_col].dropna().unique()
+                                        
+                                        if len(unique_drivers) == 1:
+                                            # Single driver - use their name
+                                            driver_name = str(unique_drivers[0]).strip()
+                                        elif len(unique_drivers) > 1:
+                                            # Multiple drivers - indicate this
+                                            driver_name = f"Multiple_Drivers({len(unique_drivers)})"
+                                        
+                                        # Clean up driver name for filename
+                                        if driver_name:
+                                            driver_name = "".join(c for c in driver_name 
+                                                                if c.isalnum() or c in (" ", "-", "_", "(", ")")).strip()
+                                    
+                                    saved_path = save_processed_file(processed_df, "driver_run_sheet", driver_name)
+                                    
+                                    if driver_name:
+                                        st.success(f"✅ Saved for driver: **{driver_name.replace('_', ' ')}**")
+                                        st.success("📁 You can now use this in 'PDF Label Numbering' → 'Use Saved File'")
+                                    else:
+                                        st.success(f"✅ Saved! You can now use this in 'PDF Label Numbering' → 'Use Saved File'")
+                                    
                                     st.info(f"📁 Saved as: `{os.path.basename(saved_path)}`")
                                 except Exception as e:
                                     st.error(f"❌ Error saving file: {e}")
