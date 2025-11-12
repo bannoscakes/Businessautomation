@@ -526,13 +526,42 @@ def file_processor_tool(tool_name):
 
                 st.subheader("2. Apply or Create Template")
 
+                # Create file hash and safe names early for consistent use
+                import hashlib
+                file_hash = hashlib.md5(uploaded_file.name.encode()).hexdigest()[:8]
+                safe_tool_name = "".join(c for c in tool_name if c.isalnum() or c == "_")[:20]
+
                 col_temp1, col_temp2 = st.columns([3, 1])
                 
                 with col_temp1:
+                    # Create a safe key for template selector to avoid conflicts
+                    template_selector_key = f"{safe_tool_name}_template_{file_hash}"
+                    
+                    # Add template compatibility info
+                    def format_template_option(template_name):
+                        if template_name == "<New Template>":
+                            return template_name
+                        
+                        template_data = templates.get(template_name, {})
+                        if 'columns' not in template_data:
+                            return f"{template_name} ⚠️"
+                        
+                        matching_cols = len([col for col in template_data['columns'] if col in original_columns])
+                        total_cols = len(template_data['columns'])
+                        
+                        if matching_cols == total_cols:
+                            return f"{template_name} ✅ ({matching_cols}/{total_cols})"
+                        elif matching_cols > 0:
+                            return f"{template_name} ⚠️ ({matching_cols}/{total_cols})"
+                        else:
+                            return f"{template_name} ❌ (0/{total_cols})"
+                    
                     selected_template_name = st.selectbox(
                         "**Select Template**", 
                         ["<New Template>"] + template_names,
-                        key=f"{tool_name}_template_selector_{uploaded_file.name}"
+                        key=template_selector_key,
+                        format_func=format_template_option,
+                        help="✅ = All columns match, ⚠️ = Some columns match, ❌ = No columns match"
                     )
                 
                 with col_temp2:
@@ -550,28 +579,71 @@ def file_processor_tool(tool_name):
                 st.markdown("---")
                 st.subheader("Customize Columns")
 
-                initial_cols = current_config['columns'] if current_config else original_columns
+                # Validate and filter template columns against current file columns
+                if current_config and 'columns' in current_config:
+                    # Only keep columns that exist in the current file
+                    valid_template_cols = [col for col in current_config['columns'] if col in original_columns]
+                    
+                    if len(valid_template_cols) != len(current_config['columns']):
+                        missing_cols = [col for col in current_config['columns'] if col not in original_columns]
+                        st.warning(f"⚠️ Template '{selected_template_name}' contains columns not found in this file: {', '.join(missing_cols[:3])}")
+                        if len(missing_cols) > 3:
+                            st.info(f"And {len(missing_cols) - 3} more missing columns...")
+                    
+                    initial_cols = valid_template_cols if valid_template_cols else original_columns
+                else:
+                    initial_cols = original_columns
 
                 st.write("Use the multiselect below to **reorder** and **remove/keep** columns.")
 
-                session_key = f"{tool_name}_template_state"
-                file_key = f"{tool_name}_file_state"
+                # Create session state keys using the already defined variables
+                session_key = f"{tool_name}_template_state_{file_hash}"
+                file_key = f"{tool_name}_file_state_{file_hash}"
+                template_key = f"{session_key}_template_name"
                 
-                if (session_key not in st.session_state or 
-                    file_key not in st.session_state or 
-                    st.session_state[file_key] != uploaded_file.name or
-                    st.session_state.get(f"{session_key}_name") != selected_template_name):
-                    
+                # Smart session state management - only reset if truly necessary
+                needs_reset = (
+                    session_key not in st.session_state or  # No session state exists
+                    st.session_state.get(file_key) != uploaded_file.name or  # Different file
+                    st.session_state.get(template_key) != selected_template_name  # Different template
+                )
+                
+                if needs_reset:
                     st.session_state[session_key] = initial_cols
                     st.session_state[file_key] = uploaded_file.name
-                    st.session_state[f"{session_key}_name"] = selected_template_name
+                    st.session_state[template_key] = selected_template_name
+                    
+                    # Show info when template is applied automatically
+                    if selected_template_name != "<New Template>" and current_config:
+                        valid_count = len([col for col in current_config['columns'] if col in original_columns])
+                        if valid_count > 0:
+                            st.info(f"✅ Applied template '{selected_template_name}' with {valid_count} matching columns")
+                        else:
+                            st.warning(f"⚠️ Template '{selected_template_name}' applied but no matching columns found")
+
+                # Create a safe key for the multiselect widget
+                safe_file_name = "".join(c for c in uploaded_file.name.split('.')[0] if c.isalnum())[:15]
+                safe_template = "".join(c for c in selected_template_name if c.isalnum())[:15] if selected_template_name != "<New Template>" else "new"
+                
+                multiselect_key = f"{safe_tool_name}_{safe_file_name}_{safe_template}_{file_hash}"
+
+                # Final validation - ensure session state only contains valid columns
+                valid_session_defaults = [col for col in st.session_state[session_key] if col in original_columns]
+                if not valid_session_defaults or len(valid_session_defaults) != len(st.session_state[session_key]):
+                    # Clean up invalid columns from session state
+                    st.session_state[session_key] = valid_session_defaults if valid_session_defaults else original_columns
 
                 new_column_order = st.multiselect(
                     '**Processed Column Order**:',
                     options=original_columns,
                     default=st.session_state[session_key],
-                    key=f'{tool_name}_multiselect_{uploaded_file.name}_{selected_template_name}'
+                    key=multiselect_key,
+                    help="Drag to reorder columns, remove columns by deselecting them"
                 )
+                
+                # Update session state when user makes changes
+                if new_column_order != st.session_state[session_key]:
+                    st.session_state[session_key] = new_column_order
 
                 processed_df = process_data(df, {'columns': new_column_order})
 
