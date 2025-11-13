@@ -6,6 +6,40 @@ import zipfile
 import io
 from datetime import datetime
 
+# Time-based gradient functions
+def get_time_based_gradient():
+    """Returns gradient CSS classes based on current time of day"""
+    hour = datetime.now().hour
+
+    if 5 <= hour < 12:
+        # Morning: Fresh, energetic blues and warm yellows
+        return {
+            'background': 'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 50%, #e0e7ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(96, 165, 250, 0.3) 0%, rgba(34, 211, 238, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(34, 211, 238, 0.3) 0%, rgba(20, 184, 166, 0.3) 100%)'
+        }
+    elif 12 <= hour < 17:
+        # Afternoon: Bright, productive purples and pinks
+        return {
+            'background': 'linear-gradient(135deg, #ede9fe 0%, #f3e8ff 50%, #fae8ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(192, 132, 252, 0.3) 0%, rgba(236, 72, 153, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(232, 121, 249, 0.3) 0%, rgba(192, 132, 252, 0.3) 100%)'
+        }
+    elif 17 <= hour < 20:
+        # Evening: Warm sunset oranges and pinks
+        return {
+            'background': 'linear-gradient(135deg, #fed7aa 0%, #fecdd3 50%, #fbcfe8 100%)',
+            'orb1': 'radial-gradient(circle, rgba(251, 146, 60, 0.3) 0%, rgba(251, 113, 133, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(251, 113, 133, 0.3) 0%, rgba(244, 114, 182, 0.3) 100%)'
+        }
+    else:
+        # Night: Deep, calm indigos and purples
+        return {
+            'background': 'linear-gradient(135deg, #c7d2fe 0%, #ddd6fe 50%, #e9d5ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(129, 140, 248, 0.3) 0%, rgba(167, 139, 250, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(167, 139, 250, 0.3) 0%, rgba(192, 132, 252, 0.3) 100%)'
+        }
+
 # Try to import PDF libraries
 try:
     from PyPDF2 import PdfReader, PdfWriter
@@ -1060,10 +1094,128 @@ def file_processor_tool(tool_name):
 
 # Main app
 st.set_page_config(
-    layout="wide", 
-    page_title="Business Automation Platform", 
+    layout="wide",
+    page_title="Business Automation Platform",
     page_icon="⚙️"
 )
+
+# Apply time-based gradient theme
+gradients = get_time_based_gradient()
+
+# Custom CSS for time-based gradients and animations
+st.markdown(f"""
+<style>
+    /* Time-based gradient background */
+    .stApp {{
+        background: {gradients['background']};
+        animation: gradient-shift 15s ease infinite;
+        background-size: 200% 200%;
+    }}
+
+    @keyframes gradient-shift {{
+        0% {{ background-position: 0% 50%; }}
+        50% {{ background-position: 100% 50%; }}
+        100% {{ background-position: 0% 50%; }}
+    }}
+
+    /* Ambient orbs */
+    .stApp::before {{
+        content: '';
+        position: fixed;
+        top: -10%;
+        left: -10%;
+        width: 500px;
+        height: 500px;
+        background: {gradients['orb1']};
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: 0.6;
+        animation: float-orb 20s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 0;
+    }}
+
+    .stApp::after {{
+        content: '';
+        position: fixed;
+        bottom: -10%;
+        right: -10%;
+        width: 500px;
+        height: 500px;
+        background: {gradients['orb2']};
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: 0.6;
+        animation: float-orb 25s ease-in-out infinite reverse;
+        pointer-events: none;
+        z-index: 0;
+    }}
+
+    @keyframes float-orb {{
+        0%, 100% {{ transform: translate(0, 0) scale(1); }}
+        33% {{ transform: translate(30px, -30px) scale(1.1); }}
+        66% {{ transform: translate(-20px, 20px) scale(0.9); }}
+    }}
+
+    /* Ensure content is above the orbs */
+    .main .block-container {{
+        position: relative;
+        z-index: 1;
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    }}
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {{
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(10px);
+        border-right: 1px solid rgba(255, 255, 255, 0.3);
+    }}
+
+    [data-testid="stSidebar"] .css-1d391kg {{
+        background: rgba(255, 255, 255, 0.85);
+    }}
+
+    /* Enhanced cards and containers */
+    div[data-testid="stExpander"] {{
+        background: rgba(255, 255, 255, 0.6);
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+    }}
+
+    /* Button enhancements */
+    .stButton>button {{
+        border-radius: 10px;
+        transition: all 0.3s ease;
+        border: none;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }}
+
+    .stButton>button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }}
+
+    /* Smooth transitions */
+    * {{
+        transition: background-color 0.3s ease;
+    }}
+
+    /* Info boxes */
+    .stAlert {{
+        border-radius: 10px;
+        backdrop-filter: blur(5px);
+    }}
+
+    /* Headers with subtle glow */
+    h1, h2, h3 {{
+        text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+    }}
+</style>
+""", unsafe_allow_html=True)
 
 st.title("⚙️ Business Automation Platform")
 
