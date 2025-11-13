@@ -555,8 +555,18 @@ def pdf_label_numbering_tool():
                         page_text = page.extract_text()
                         
                         found_order = None
+                        # Try multiple matching strategies
                         for order_ref in order_to_stop.keys():
+                            # Exact match
                             if order_ref in page_text:
+                                found_order = order_ref
+                                break
+                            # Try without # if order_ref starts with #
+                            elif order_ref.startswith('#') and order_ref[1:] in page_text:
+                                found_order = order_ref
+                                break
+                            # Try with # if order_ref doesn't start with #
+                            elif not order_ref.startswith('#') and f"#{order_ref}" in page_text:
                                 found_order = order_ref
                                 break
                         
@@ -567,6 +577,7 @@ def pdf_label_numbering_tool():
                             stop_num = "?"
                             unmatched_orders.append(f"Page {page_idx + 1}")
                         
+                        # Create overlay with the stop number
                         packet = io.BytesIO()
                         page_width = float(page.mediabox.width)
                         page_height = float(page.mediabox.height)
