@@ -6,6 +6,40 @@ import zipfile
 import io
 from datetime import datetime
 
+# Time-based gradient functions
+def get_time_based_gradient():
+    """Returns gradient CSS classes based on current time of day"""
+    hour = datetime.now().hour
+
+    if 5 <= hour < 12:
+        # Morning: Fresh, energetic blues and warm yellows
+        return {
+            'background': 'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 50%, #e0e7ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(96, 165, 250, 0.3) 0%, rgba(34, 211, 238, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(34, 211, 238, 0.3) 0%, rgba(20, 184, 166, 0.3) 100%)'
+        }
+    elif 12 <= hour < 17:
+        # Afternoon: Bright, productive purples and pinks
+        return {
+            'background': 'linear-gradient(135deg, #ede9fe 0%, #f3e8ff 50%, #fae8ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(192, 132, 252, 0.3) 0%, rgba(236, 72, 153, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(232, 121, 249, 0.3) 0%, rgba(192, 132, 252, 0.3) 100%)'
+        }
+    elif 17 <= hour < 20:
+        # Evening: Warm sunset oranges and pinks
+        return {
+            'background': 'linear-gradient(135deg, #fed7aa 0%, #fecdd3 50%, #fbcfe8 100%)',
+            'orb1': 'radial-gradient(circle, rgba(251, 146, 60, 0.3) 0%, rgba(251, 113, 133, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(251, 113, 133, 0.3) 0%, rgba(244, 114, 182, 0.3) 100%)'
+        }
+    else:
+        # Night: Deep, calm indigos and purples
+        return {
+            'background': 'linear-gradient(135deg, #c7d2fe 0%, #ddd6fe 50%, #e9d5ff 100%)',
+            'orb1': 'radial-gradient(circle, rgba(129, 140, 248, 0.3) 0%, rgba(167, 139, 250, 0.3) 100%)',
+            'orb2': 'radial-gradient(circle, rgba(167, 139, 250, 0.3) 0%, rgba(192, 132, 252, 0.3) 100%)'
+        }
+
 # Try to import PDF libraries
 try:
     from PyPDF2 import PdfReader, PdfWriter
@@ -17,12 +51,14 @@ except ImportError:
 # Configuration for Template Storage
 TEMPLATE_DIR = "templates"
 SAVED_FILES_DIR = "saved_files"
+MESSAGES_DIR = "messages"
 DRIVER_KEY = "Driver Run Sheet Processor"
 KITCHEN_KEY = "Kitchen Order List Processor"
 PDF_LABEL_KEY = "PDF Label Numbering"
+COMMS_KEY = "Customer Communication Hub"
 
 # Create directories if they don't exist
-for directory in [TEMPLATE_DIR, SAVED_FILES_DIR]:
+for directory in [TEMPLATE_DIR, SAVED_FILES_DIR, MESSAGES_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -620,6 +656,567 @@ def pdf_label_numbering_tool():
                     import traceback
                     st.code(traceback.format_exc())
 
+def customer_communication_hub():
+    """Unified customer communication hub with template library and multi-platform support."""
+
+    st.header("💬 Customer Communication Hub")
+    st.markdown("**Manage all customer messages and replies from one place**")
+
+    # File paths for data storage
+    templates_file = os.path.join(TEMPLATE_DIR, "message_templates.json")
+    messages_file = os.path.join(MESSAGES_DIR, "conversations.json")
+    api_config_file = os.path.join(TEMPLATE_DIR, "api_config.json")
+
+    # Load or initialize data
+    def load_message_templates():
+        try:
+            with open(templates_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    def save_message_templates(templates):
+        with open(templates_file, 'w') as f:
+            json.dump(templates, f, indent=4)
+
+    def load_conversations():
+        try:
+            with open(messages_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            # Sample data for demo purposes
+            return [
+                {
+                    "id": "msg_001",
+                    "platform": "Email",
+                    "customer_name": "John Smith",
+                    "customer_contact": "john@example.com",
+                    "subject": "Order Inquiry",
+                    "message": "Hi, I'd like to check the status of my order #12345",
+                    "timestamp": "2024-11-13 09:30:00",
+                    "status": "unread",
+                    "replies": []
+                },
+                {
+                    "id": "msg_002",
+                    "platform": "Facebook",
+                    "customer_name": "Sarah Johnson",
+                    "customer_contact": "@sarahj",
+                    "subject": "Delivery Question",
+                    "message": "What time will my delivery arrive today?",
+                    "timestamp": "2024-11-13 10:15:00",
+                    "status": "unread",
+                    "replies": []
+                }
+            ]
+
+    def save_conversations(conversations):
+        with open(messages_file, 'w') as f:
+            json.dump(conversations, f, indent=4)
+
+    def load_api_config():
+        try:
+            with open(api_config_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {
+                "email": {"configured": False, "provider": "outlook", "credentials": {}},
+                "facebook": {"configured": False, "api_key": "", "page_id": ""},
+                "instagram": {"configured": False, "api_key": "", "account_id": ""},
+                "whatsapp": {"configured": False, "api_key": "", "phone_id": ""},
+                "twitter": {"configured": False, "api_key": "", "api_secret": ""}
+            }
+
+    def save_api_config(config):
+        with open(api_config_file, 'w') as f:
+            json.dump(config, f, indent=4)
+
+    # Create tabs for different sections
+    tab1, tab2, tab3, tab4 = st.tabs(["📥 Inbox", "📝 Templates Library", "🔌 API Configuration", "📊 Statistics"])
+
+    # TAB 1: INBOX
+    with tab1:
+        st.subheader("Unified Inbox")
+
+        conversations = load_conversations()
+
+        # Filter options
+        col1, col2, col3 = st.columns([2, 2, 1])
+
+        with col1:
+            platform_filter = st.selectbox(
+                "Filter by Platform:",
+                ["All"] + list(set([msg["platform"] for msg in conversations])),
+                key="platform_filter"
+            )
+
+        with col2:
+            status_filter = st.selectbox(
+                "Filter by Status:",
+                ["All", "unread", "replied", "resolved"],
+                key="status_filter"
+            )
+
+        with col3:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.rerun()
+
+        # Apply filters
+        filtered_messages = conversations
+        if platform_filter != "All":
+            filtered_messages = [m for m in filtered_messages if m["platform"] == platform_filter]
+        if status_filter != "All":
+            filtered_messages = [m for m in filtered_messages if m["status"] == status_filter]
+
+        st.markdown(f"**Showing {len(filtered_messages)} message(s)**")
+
+        # Display messages
+        if not filtered_messages:
+            st.info("📭 No messages to display. Connect your platforms in the API Configuration tab.")
+        else:
+            for idx, msg in enumerate(filtered_messages):
+                status_emoji = "🔵" if msg["status"] == "unread" else "✅" if msg["status"] == "replied" else "✔️"
+
+                with st.expander(f"{status_emoji} [{msg['platform']}] {msg['customer_name']} - {msg['subject']}", expanded=(idx == 0)):
+                    col_a, col_b = st.columns([3, 1])
+
+                    with col_a:
+                        st.markdown(f"**From:** {msg['customer_name']} ({msg['customer_contact']})")
+                        st.markdown(f"**Time:** {msg['timestamp']}")
+                        st.markdown(f"**Platform:** {msg['platform']}")
+
+                    with col_b:
+                        current_status = st.selectbox(
+                            "Status:",
+                            ["unread", "replied", "resolved"],
+                            index=["unread", "replied", "resolved"].index(msg["status"]),
+                            key=f"status_{msg['id']}"
+                        )
+                        if current_status != msg["status"]:
+                            msg["status"] = current_status
+                            save_conversations(conversations)
+                            st.success("Status updated!")
+
+                    st.markdown("---")
+                    st.markdown("**Message:**")
+                    st.info(msg["message"])
+
+                    # Show reply history
+                    if msg.get("replies"):
+                        st.markdown("**Conversation History:**")
+                        for reply in msg["replies"]:
+                            st.markdown(f"**You** ({reply['timestamp']}):")
+                            st.success(reply['text'])
+
+                    st.markdown("---")
+                    st.markdown("**Reply to Customer:**")
+
+                    # Template selector for quick replies
+                    templates = load_message_templates()
+                    if templates:
+                        col_t1, col_t2 = st.columns([3, 1])
+                        with col_t1:
+                            selected_template = st.selectbox(
+                                "Quick Insert Template:",
+                                ["None"] + list(templates.keys()),
+                                key=f"template_select_{msg['id']}"
+                            )
+                        with col_t2:
+                            if selected_template != "None":
+                                if st.button("📋 Insert", key=f"insert_template_{msg['id']}", use_container_width=True):
+                                    st.session_state[f"reply_text_{msg['id']}"] = templates[selected_template]["content"]
+                                    st.rerun()
+
+                    # Reply text area
+                    reply_text = st.text_area(
+                        "Your reply:",
+                        value=st.session_state.get(f"reply_text_{msg['id']}", ""),
+                        height=150,
+                        key=f"reply_{msg['id']}",
+                        placeholder="Type your reply here..."
+                    )
+
+                    col_r1, col_r2 = st.columns([1, 4])
+                    with col_r1:
+                        if st.button("📤 Send Reply", key=f"send_{msg['id']}", type="primary", use_container_width=True):
+                            if reply_text.strip():
+                                # Add reply to conversation
+                                if "replies" not in msg:
+                                    msg["replies"] = []
+                                msg["replies"].append({
+                                    "text": reply_text,
+                                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                })
+                                msg["status"] = "replied"
+                                save_conversations(conversations)
+
+                                st.success("✅ Reply sent!")
+                                st.info(f"💡 Note: This is a demo. Connect your {msg['platform']} API to send real messages.")
+
+                                # Clear reply text
+                                if f"reply_text_{msg['id']}" in st.session_state:
+                                    del st.session_state[f"reply_text_{msg['id']}"]
+                                st.rerun()
+                            else:
+                                st.error("Please enter a reply message.")
+
+                    with col_r2:
+                        if st.button("📝 Add Internal Note", key=f"note_{msg['id']}", use_container_width=True):
+                            st.info("Internal notes feature - Coming soon!")
+
+    # TAB 2: TEMPLATES LIBRARY
+    with tab2:
+        st.subheader("📝 Message Templates Library")
+        st.markdown("Create and manage reusable message templates for quick replies")
+
+        templates = load_message_templates()
+
+        col_lib1, col_lib2 = st.columns([2, 1])
+
+        with col_lib1:
+            st.markdown("### Current Templates")
+
+            if not templates:
+                st.info("📋 No templates yet. Create your first template below!")
+            else:
+                for template_name, template_data in templates.items():
+                    with st.expander(f"📄 {template_name}", expanded=False):
+                        st.markdown(f"**Category:** {template_data.get('category', 'General')}")
+                        st.markdown(f"**Created:** {template_data.get('created', 'N/A')}")
+                        st.markdown("**Content:**")
+                        st.info(template_data["content"])
+
+                        col_t1, col_t2, col_t3 = st.columns(3)
+
+                        with col_t1:
+                            if st.button("✏️ Edit", key=f"edit_{template_name}", use_container_width=True):
+                                st.session_state["editing_template"] = template_name
+                                st.session_state["edit_template_content"] = template_data["content"]
+                                st.session_state["edit_template_category"] = template_data.get("category", "General")
+                                st.rerun()
+
+                        with col_t2:
+                            if st.button("📋 Copy", key=f"copy_{template_name}", use_container_width=True):
+                                st.session_state["clipboard"] = template_data["content"]
+                                st.success("Copied to clipboard!")
+
+                        with col_t3:
+                            if st.button("🗑️ Delete", key=f"del_{template_name}", use_container_width=True):
+                                del templates[template_name]
+                                save_message_templates(templates)
+                                st.success(f"Template '{template_name}' deleted!")
+                                st.rerun()
+
+        with col_lib2:
+            st.markdown("### Add/Edit Template")
+
+            # Check if editing existing template
+            if "editing_template" in st.session_state:
+                st.info(f"✏️ Editing: **{st.session_state['editing_template']}**")
+                template_name_input = st.text_input("Template Name:", value=st.session_state['editing_template'], key="edit_name")
+                template_category = st.selectbox(
+                    "Category:",
+                    ["General", "Order Updates", "Delivery", "Support", "Greetings", "Apology", "Thank You", "Custom"],
+                    index=["General", "Order Updates", "Delivery", "Support", "Greetings", "Apology", "Thank You", "Custom"].index(st.session_state.get("edit_template_category", "General")),
+                    key="edit_cat"
+                )
+                template_content = st.text_area(
+                    "Template Content:",
+                    value=st.session_state.get("edit_template_content", ""),
+                    height=200,
+                    key="edit_content",
+                    placeholder="Enter your message template here..."
+                )
+
+                col_save1, col_save2 = st.columns(2)
+                with col_save1:
+                    if st.button("💾 Save Changes", type="primary", use_container_width=True):
+                        if template_name_input.strip() and template_content.strip():
+                            # Remove old template if name changed
+                            if template_name_input != st.session_state['editing_template']:
+                                del templates[st.session_state['editing_template']]
+
+                            templates[template_name_input] = {
+                                "content": template_content,
+                                "category": template_category,
+                                "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                            save_message_templates(templates)
+
+                            # Clear editing state
+                            del st.session_state["editing_template"]
+                            if "edit_template_content" in st.session_state:
+                                del st.session_state["edit_template_content"]
+                            if "edit_template_category" in st.session_state:
+                                del st.session_state["edit_template_category"]
+
+                            st.success("Template updated!")
+                            st.rerun()
+                        else:
+                            st.error("Please fill in all fields.")
+
+                with col_save2:
+                    if st.button("❌ Cancel", use_container_width=True):
+                        del st.session_state["editing_template"]
+                        if "edit_template_content" in st.session_state:
+                            del st.session_state["edit_template_content"]
+                        if "edit_template_category" in st.session_state:
+                            del st.session_state["edit_template_category"]
+                        st.rerun()
+            else:
+                # Create new template
+                template_name_input = st.text_input("Template Name:", placeholder="e.g., Order Confirmation")
+                template_category = st.selectbox(
+                    "Category:",
+                    ["General", "Order Updates", "Delivery", "Support", "Greetings", "Apology", "Thank You", "Custom"]
+                )
+                template_content = st.text_area(
+                    "Template Content:",
+                    height=200,
+                    placeholder="Enter your message template here...\n\nTip: Use placeholders like {customer_name}, {order_number} for personalization"
+                )
+
+                if st.button("➕ Create Template", type="primary", use_container_width=True):
+                    if template_name_input.strip() and template_content.strip():
+                        if template_name_input in templates:
+                            st.error("Template name already exists. Choose a different name.")
+                        else:
+                            templates[template_name_input] = {
+                                "content": template_content,
+                                "category": template_category,
+                                "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                            save_message_templates(templates)
+                            st.success(f"Template '{template_name_input}' created!")
+                            st.rerun()
+                    else:
+                        st.error("Please fill in all fields.")
+
+        st.markdown("---")
+        st.markdown("### 📦 Template Management")
+
+        col_exp1, col_exp2 = st.columns(2)
+
+        with col_exp1:
+            if templates:
+                # Export templates
+                templates_json = json.dumps(templates, indent=4)
+                st.download_button(
+                    label="⬇️ Export All Templates",
+                    data=templates_json,
+                    file_name=f"message_templates_{datetime.now().strftime('%Y%m%d')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+
+        with col_exp2:
+            # Import templates
+            uploaded_templates = st.file_uploader("⬆️ Import Templates", type=['json'], key="import_templates")
+            if uploaded_templates:
+                try:
+                    imported = json.load(uploaded_templates)
+                    templates.update(imported)
+                    save_message_templates(templates)
+                    st.success(f"Imported {len(imported)} template(s)!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error importing templates: {e}")
+
+    # TAB 3: API CONFIGURATION
+    with tab3:
+        st.subheader("🔌 API Configuration")
+        st.markdown("Connect your email and social media accounts to receive and send messages")
+
+        api_config = load_api_config()
+
+        st.info("💡 **Setup Instructions:** Check the `API_SETUP_GUIDE.md` file in your project folder for detailed instructions on obtaining API credentials.")
+
+        # Email Configuration
+        with st.expander("📧 Email (Outlook)", expanded=True):
+            st.markdown("**Status:** " + ("✅ Connected" if api_config["email"]["configured"] else "❌ Not Connected"))
+
+            email_provider = st.selectbox("Email Provider:", ["Outlook", "Gmail", "Custom SMTP"], key="email_provider")
+
+            if email_provider == "Outlook":
+                st.markdown("**Microsoft Graph API Configuration:**")
+                client_id = st.text_input("Client ID:", value=api_config["email"]["credentials"].get("client_id", ""), type="password", key="outlook_client_id")
+                client_secret = st.text_input("Client Secret:", value=api_config["email"]["credentials"].get("client_secret", ""), type="password", key="outlook_client_secret")
+                tenant_id = st.text_input("Tenant ID:", value=api_config["email"]["credentials"].get("tenant_id", ""), key="outlook_tenant_id")
+
+                if st.button("💾 Save Outlook Config", key="save_outlook"):
+                    api_config["email"] = {
+                        "configured": bool(client_id and client_secret and tenant_id),
+                        "provider": "outlook",
+                        "credentials": {
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                            "tenant_id": tenant_id
+                        }
+                    }
+                    save_api_config(api_config)
+                    st.success("✅ Outlook configuration saved!")
+                    st.rerun()
+
+            elif email_provider == "Gmail":
+                st.markdown("**Gmail API Configuration:**")
+                st.info("📖 See API_SETUP_GUIDE.md for Gmail setup instructions")
+                credentials_file = st.file_uploader("Upload credentials.json from Google Console", type=['json'], key="gmail_creds")
+
+                if credentials_file and st.button("💾 Save Gmail Config"):
+                    api_config["email"] = {
+                        "configured": True,
+                        "provider": "gmail",
+                        "credentials": json.load(credentials_file)
+                    }
+                    save_api_config(api_config)
+                    st.success("✅ Gmail configuration saved!")
+
+        # Facebook Configuration
+        with st.expander("📘 Facebook Messenger", expanded=False):
+            st.markdown("**Status:** " + ("✅ Connected" if api_config["facebook"]["configured"] else "❌ Not Connected"))
+
+            fb_api_key = st.text_input("Page Access Token:", value=api_config["facebook"].get("api_key", ""), type="password", key="fb_token")
+            fb_page_id = st.text_input("Page ID:", value=api_config["facebook"].get("page_id", ""), key="fb_page_id")
+
+            if st.button("💾 Save Facebook Config", key="save_fb"):
+                api_config["facebook"] = {
+                    "configured": bool(fb_api_key and fb_page_id),
+                    "api_key": fb_api_key,
+                    "page_id": fb_page_id
+                }
+                save_api_config(api_config)
+                st.success("✅ Facebook configuration saved!")
+                st.rerun()
+
+        # Instagram Configuration
+        with st.expander("📷 Instagram", expanded=False):
+            st.markdown("**Status:** " + ("✅ Connected" if api_config["instagram"]["configured"] else "❌ Not Connected"))
+
+            ig_api_key = st.text_input("Access Token:", value=api_config["instagram"].get("api_key", ""), type="password", key="ig_token")
+            ig_account_id = st.text_input("Instagram Account ID:", value=api_config["instagram"].get("account_id", ""), key="ig_account")
+
+            if st.button("💾 Save Instagram Config", key="save_ig"):
+                api_config["instagram"] = {
+                    "configured": bool(ig_api_key and ig_account_id),
+                    "api_key": ig_api_key,
+                    "account_id": ig_account_id
+                }
+                save_api_config(api_config)
+                st.success("✅ Instagram configuration saved!")
+                st.rerun()
+
+        # WhatsApp Configuration
+        with st.expander("💬 WhatsApp Business", expanded=False):
+            st.markdown("**Status:** " + ("✅ Connected" if api_config["whatsapp"]["configured"] else "❌ Not Connected"))
+
+            wa_api_key = st.text_input("API Key:", value=api_config["whatsapp"].get("api_key", ""), type="password", key="wa_token")
+            wa_phone_id = st.text_input("Phone Number ID:", value=api_config["whatsapp"].get("phone_id", ""), key="wa_phone")
+
+            if st.button("💾 Save WhatsApp Config", key="save_wa"):
+                api_config["whatsapp"] = {
+                    "configured": bool(wa_api_key and wa_phone_id),
+                    "api_key": wa_api_key,
+                    "phone_id": wa_phone_id
+                }
+                save_api_config(api_config)
+                st.success("✅ WhatsApp configuration saved!")
+                st.rerun()
+
+        # Twitter/X Configuration
+        with st.expander("🐦 Twitter / X", expanded=False):
+            st.markdown("**Status:** " + ("✅ Connected" if api_config["twitter"]["configured"] else "❌ Not Connected"))
+
+            tw_api_key = st.text_input("API Key:", value=api_config["twitter"].get("api_key", ""), type="password", key="tw_key")
+            tw_api_secret = st.text_input("API Secret:", value=api_config["twitter"].get("api_secret", ""), type="password", key="tw_secret")
+
+            if st.button("💾 Save Twitter Config", key="save_tw"):
+                api_config["twitter"] = {
+                    "configured": bool(tw_api_key and tw_api_secret),
+                    "api_key": tw_api_key,
+                    "api_secret": tw_api_secret
+                }
+                save_api_config(api_config)
+                st.success("✅ Twitter configuration saved!")
+                st.rerun()
+
+        # Custom Platform
+        st.markdown("---")
+        st.markdown("### ➕ Add Custom Platform")
+
+        with st.expander("Add New Platform Integration", expanded=False):
+            new_platform_name = st.text_input("Platform Name:", placeholder="e.g., Telegram, Discord, LinkedIn")
+            new_platform_api = st.text_input("API Key/Token:", type="password")
+            new_platform_endpoint = st.text_input("API Endpoint:", placeholder="https://api.example.com")
+
+            if st.button("➕ Add Platform", key="add_custom_platform"):
+                if new_platform_name and new_platform_api:
+                    api_config[new_platform_name.lower()] = {
+                        "configured": True,
+                        "api_key": new_platform_api,
+                        "endpoint": new_platform_endpoint
+                    }
+                    save_api_config(api_config)
+                    st.success(f"✅ {new_platform_name} added!")
+                    st.rerun()
+                else:
+                    st.error("Please provide platform name and API key.")
+
+        st.markdown("---")
+        if st.button("🧪 Test All Connections", type="primary", use_container_width=True):
+            st.info("🔄 Testing connections... (This feature will be activated once APIs are configured)")
+            for platform, config in api_config.items():
+                if config.get("configured"):
+                    st.success(f"✅ {platform.title()}: Configuration found")
+                else:
+                    st.warning(f"⚠️ {platform.title()}: Not configured")
+
+    # TAB 4: STATISTICS
+    with tab4:
+        st.subheader("📊 Communication Statistics")
+
+        conversations = load_conversations()
+
+        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+
+        with col_stat1:
+            st.metric("Total Messages", len(conversations))
+
+        with col_stat2:
+            unread_count = len([m for m in conversations if m["status"] == "unread"])
+            st.metric("Unread", unread_count)
+
+        with col_stat3:
+            replied_count = len([m for m in conversations if m["status"] == "replied"])
+            st.metric("Replied", replied_count)
+
+        with col_stat4:
+            templates = load_message_templates()
+            st.metric("Templates", len(templates))
+
+        st.markdown("---")
+
+        # Platform breakdown
+        st.markdown("### Messages by Platform")
+        platform_counts = {}
+        for msg in conversations:
+            platform = msg["platform"]
+            platform_counts[platform] = platform_counts.get(platform, 0) + 1
+
+        if platform_counts:
+            df_platforms = pd.DataFrame(list(platform_counts.items()), columns=["Platform", "Messages"])
+            st.bar_chart(df_platforms.set_index("Platform"))
+        else:
+            st.info("No message data available yet.")
+
+        st.markdown("---")
+
+        # Recent activity
+        st.markdown("### Recent Activity")
+        recent_messages = sorted(conversations, key=lambda x: x["timestamp"], reverse=True)[:5]
+
+        for msg in recent_messages:
+            st.markdown(f"**{msg['timestamp']}** - [{msg['platform']}] {msg['customer_name']}: {msg['subject']}")
+
 def file_processor_tool(tool_name):
     """Generates the UI and logic for a specific file processing tool."""
 
@@ -1060,10 +1657,128 @@ def file_processor_tool(tool_name):
 
 # Main app
 st.set_page_config(
-    layout="wide", 
-    page_title="Business Automation Platform", 
+    layout="wide",
+    page_title="Business Automation Platform",
     page_icon="⚙️"
 )
+
+# Apply time-based gradient theme
+gradients = get_time_based_gradient()
+
+# Custom CSS for time-based gradients and animations
+st.markdown(f"""
+<style>
+    /* Time-based gradient background */
+    .stApp {{
+        background: {gradients['background']};
+        animation: gradient-shift 15s ease infinite;
+        background-size: 200% 200%;
+    }}
+
+    @keyframes gradient-shift {{
+        0% {{ background-position: 0% 50%; }}
+        50% {{ background-position: 100% 50%; }}
+        100% {{ background-position: 0% 50%; }}
+    }}
+
+    /* Ambient orbs */
+    .stApp::before {{
+        content: '';
+        position: fixed;
+        top: -10%;
+        left: -10%;
+        width: 500px;
+        height: 500px;
+        background: {gradients['orb1']};
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: 0.6;
+        animation: float-orb 20s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 0;
+    }}
+
+    .stApp::after {{
+        content: '';
+        position: fixed;
+        bottom: -10%;
+        right: -10%;
+        width: 500px;
+        height: 500px;
+        background: {gradients['orb2']};
+        border-radius: 50%;
+        filter: blur(80px);
+        opacity: 0.6;
+        animation: float-orb 25s ease-in-out infinite reverse;
+        pointer-events: none;
+        z-index: 0;
+    }}
+
+    @keyframes float-orb {{
+        0%, 100% {{ transform: translate(0, 0) scale(1); }}
+        33% {{ transform: translate(30px, -30px) scale(1.1); }}
+        66% {{ transform: translate(-20px, 20px) scale(0.9); }}
+    }}
+
+    /* Ensure content is above the orbs */
+    .main .block-container {{
+        position: relative;
+        z-index: 1;
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    }}
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {{
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(10px);
+        border-right: 1px solid rgba(255, 255, 255, 0.3);
+    }}
+
+    [data-testid="stSidebar"] .css-1d391kg {{
+        background: rgba(255, 255, 255, 0.85);
+    }}
+
+    /* Enhanced cards and containers */
+    div[data-testid="stExpander"] {{
+        background: rgba(255, 255, 255, 0.6);
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+    }}
+
+    /* Button enhancements */
+    .stButton>button {{
+        border-radius: 10px;
+        transition: all 0.3s ease;
+        border: none;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }}
+
+    .stButton>button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }}
+
+    /* Smooth transitions */
+    * {{
+        transition: background-color 0.3s ease;
+    }}
+
+    /* Info boxes */
+    .stAlert {{
+        border-radius: 10px;
+        backdrop-filter: blur(5px);
+    }}
+
+    /* Headers with subtle glow */
+    h1, h2, h3 {{
+        text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+    }}
+</style>
+""", unsafe_allow_html=True)
 
 st.title("⚙️ Business Automation Platform")
 
@@ -1072,7 +1787,7 @@ st.markdown("Streamline your daily file processing with reusable templates.")
 st.sidebar.title("🔧 Automation Tools")
 selected_tool = st.sidebar.radio(
     "Select a Processor:",
-    [DRIVER_KEY, KITCHEN_KEY, PDF_LABEL_KEY],
+    [DRIVER_KEY, KITCHEN_KEY, PDF_LABEL_KEY, COMMS_KEY],
     help="Choose which automation tool to use"
 )
 
@@ -1080,7 +1795,8 @@ selected_tool = st.sidebar.radio(
 tool_descriptions = {
     DRIVER_KEY: "📋 Process driver run sheets - organize delivery routes and stops",
     KITCHEN_KEY: "🍳 Process kitchen order lists - organize food preparation orders",
-    PDF_LABEL_KEY: "🏷️ Add route numbers to PDF labels automatically"
+    PDF_LABEL_KEY: "🏷️ Add route numbers to PDF labels automatically",
+    COMMS_KEY: "💬 Unified inbox for all customer messages - Email, Facebook, Instagram, WhatsApp & more"
 }
 
 st.sidebar.markdown("---")
@@ -1089,5 +1805,7 @@ st.sidebar.info(tool_descriptions[selected_tool])
 # Run the selected tool
 if selected_tool == PDF_LABEL_KEY:
     pdf_label_numbering_tool()
+elif selected_tool == COMMS_KEY:
+    customer_communication_hub()
 else:
     file_processor_tool(selected_tool)
