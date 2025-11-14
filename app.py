@@ -4,6 +4,8 @@ import json
 import os
 import zipfile
 import io
+import base64
+import hashlib
 from datetime import datetime
 
 # Time-based gradient functions
@@ -1338,7 +1340,6 @@ def file_processor_tool(tool_name):
                 st.subheader("2. Apply or Create Template")
 
                 # Create file hash and safe names early for consistent use
-                import hashlib
                 file_hash = hashlib.md5(uploaded_file.name.encode()).hexdigest()[:8]
                 safe_tool_name = "".join(c for c in tool_name if c.isalnum() or c == "_")[:20]
 
@@ -1529,7 +1530,6 @@ def file_processor_tool(tool_name):
                         st.markdown("### 🖨️ Print Options")
                         
                         if st.button("🖨️ Open Print Preview", type="primary", use_container_width=True, key="open_print_preview"):
-                            import base64
                             b64_html = base64.b64encode(print_html.encode()).decode()
                             
                             st.components.v1.html(f"""
