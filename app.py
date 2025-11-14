@@ -1507,8 +1507,11 @@ def qr_code_content_hub():
 
         # Save HTML file
         html_path = os.path.join(QR_CONTENT_DIR, f"{qr_id}.html")
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+        try:
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+        except OSError as e:
+            raise IOError(f"Failed to save HTML content for QR {qr_id}: {e}")
 
         return html_path
 
