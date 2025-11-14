@@ -6,6 +6,8 @@ import zipfile
 import io
 import base64
 import hashlib
+import uuid
+import traceback
 from datetime import datetime
 
 # Time-based gradient functions
@@ -183,6 +185,27 @@ def load_saved_file(filename):
     else:
         return pd.read_excel(filepath)
 
+def clean_dataframe_for_display(df):
+    """Clean DataFrame data types to prevent PyArrow serialization errors."""
+    if df is None or df.empty:
+        return df
+    
+    # Create a copy to avoid modifying the original
+    df_clean = df.copy()
+    
+    # Convert all columns to string to ensure consistent data types
+    for col in df_clean.columns:
+        try:
+            # Convert to string, handling NaN values
+            df_clean[col] = df_clean[col].astype(str)
+            # Replace 'nan' string with empty string for better display
+            df_clean[col] = df_clean[col].replace('nan', '')
+        except Exception:
+            # If conversion fails, keep original column
+            continue
+    
+    return df_clean
+
 def process_data(df, template_config):
     """Applies column selection and reordering based on the template."""
     if not df.empty and template_config and 'columns' in template_config:
@@ -221,7 +244,7 @@ def pdf_label_numbering_tool():
     
     settings_file = os.path.join(TEMPLATE_DIR, "pdf_label_settings.json")
     default_settings = {
-        "font_size": 7
+        "font_size": 72,
         "x_position": 30,
         "y_offset": 90,
         "color": "Red"
@@ -244,15 +267,15 @@ def pdf_label_numbering_tool():
         with col1:
             # Show a preview of the current file
             with st.expander("📊 Current Driver Data Preview", expanded=False):
-                st.dataframe(df_info.head(10), width='stretch')
+                st.dataframe(clean_dataframe_for_display(df_info.head(10)), width="stretch")
         
         with col2:
-            if st.button("🔄 Load Different File", width='stretch'):
+            if st.button("🔄 Load Different File", width="stretch"):
                 # Clear the current driver data to allow selecting a new one
                 st.session_state.loaded_driver_df = None
                 st.rerun()
             
-            if st.button("🗑️ Clear All Settings", width='stretch', help="Reset column mappings and driver selections"):
+            if st.button("🗑️ Clear All Settings", width="stretch", help="Reset column mappings and driver selections"):
                 # Clear all PDF tool settings
                 st.session_state.pdf_stop_column = None
                 st.session_state.pdf_order_column = None
@@ -328,7 +351,7 @@ def pdf_label_numbering_tool():
                     help="Files are sorted by date (newest first). Driver names are extracted when available."
                 )
                 
-                if st.button("📂 Load This File", width='stretch'):
+                if st.button("📂 Load This File", width="stretch"):
                     try:
                         driver_df = load_saved_file(selected_saved_file)
                         driver_df = driver_df.dropna(how='all')
@@ -536,7 +559,7 @@ def pdf_label_numbering_tool():
         
         with st.expander("🔍 Preview Order Mapping"):
             mapping_df = pd.DataFrame(list(order_to_stop.items()), columns=['Order Ref', 'Stop #'])
-            st.dataframe(mapping_df.head(20), width='stretch')
+            st.dataframe(clean_dataframe_for_display(mapping_df.head(20)), width="stretch")
         
         st.markdown("---")
         
@@ -579,7 +602,7 @@ def pdf_label_numbering_tool():
             st.write(f"• Position: ({x_position}, {y_offset})")
             st.info("💡 Increase Y to move DOWN")
             
-            if st.button("💾 Save These Settings as Default", width='stretch'):
+            if st.button("💾 Save These Settings as Default", width="stretch"):
                 new_settings = {
                     "font_size": font_size,
                     "x_position": x_position,
@@ -597,7 +620,7 @@ def pdf_label_numbering_tool():
         reader = PdfReader(label_pdf)
         st.write(f"**📄 Found {len(reader.pages)} label(s) in PDF**")
         
-        if st.button("🎨 Add Route Numbers to Labels", type="primary", width='stretch'):
+        if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
                     writer = PdfWriter()
@@ -663,7 +686,7 @@ def pdf_label_numbering_tool():
                         data=output,
                         file_name=f"numbered_labels_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
-                        width='stretch'
+                        width="stretch"
                     )
                     
                     st.balloons()
@@ -775,7 +798,7 @@ def customer_communication_hub():
             )
 
         with col3:
-            if st.button("🔄 Refresh", width='stretch'):
+            if st.button("🔄 Refresh", width="stretch"):
                 st.rerun()
 
         # Apply filters
@@ -840,7 +863,7 @@ def customer_communication_hub():
                             )
                         with col_t2:
                             if selected_template != "None":
-                                if st.button("📋 Insert", key=f"insert_template_{msg['id']}", width='stretch'):
+                                if st.button("📋 Insert", key=f"insert_template_{msg['id']}", width="stretch"):
                                     st.session_state[f"reply_text_{msg['id']}"] = templates[selected_template]["content"]
                                     st.rerun()
 
@@ -855,7 +878,7 @@ def customer_communication_hub():
 
                     col_r1, col_r2 = st.columns([1, 4])
                     with col_r1:
-                        if st.button("📤 Send Reply", key=f"send_{msg['id']}", type="primary", width='stretch'):
+                        if st.button("📤 Send Reply", key=f"send_{msg['id']}", type="primary", width="stretch"):
                             if reply_text.strip():
                                 # Add reply to conversation
                                 if "replies" not in msg:
@@ -878,7 +901,7 @@ def customer_communication_hub():
                                 st.error("Please enter a reply message.")
 
                     with col_r2:
-                        if st.button("📝 Add Internal Note", key=f"note_{msg['id']}", width='stretch'):
+                        if st.button("📝 Add Internal Note", key=f"note_{msg['id']}", width="stretch"):
                             st.info("Internal notes feature - Coming soon!")
 
     # TAB 2: TEMPLATES LIBRARY
@@ -906,19 +929,19 @@ def customer_communication_hub():
                         col_t1, col_t2, col_t3 = st.columns(3)
 
                         with col_t1:
-                            if st.button("✏️ Edit", key=f"edit_{template_name}", width='stretch'):
+                            if st.button("✏️ Edit", key=f"edit_{template_name}", width="stretch"):
                                 st.session_state["editing_template"] = template_name
                                 st.session_state["edit_template_content"] = template_data["content"]
                                 st.session_state["edit_template_category"] = template_data.get("category", "General")
                                 st.rerun()
 
                         with col_t2:
-                            if st.button("📋 Copy", key=f"copy_{template_name}", width='stretch'):
+                            if st.button("📋 Copy", key=f"copy_{template_name}", width="stretch"):
                                 st.session_state["clipboard"] = template_data["content"]
                                 st.success("Copied to clipboard!")
 
                         with col_t3:
-                            if st.button("🗑️ Delete", key=f"del_{template_name}", width='stretch'):
+                            if st.button("🗑️ Delete", key=f"del_{template_name}", width="stretch"):
                                 del templates[template_name]
                                 save_message_templates(templates)
                                 st.success(f"Template '{template_name}' deleted!")
@@ -947,7 +970,7 @@ def customer_communication_hub():
 
                 col_save1, col_save2 = st.columns(2)
                 with col_save1:
-                    if st.button("💾 Save Changes", type="primary", width='stretch'):
+                    if st.button("💾 Save Changes", type="primary", width="stretch"):
                         if template_name_input.strip() and template_content.strip():
                             # Remove old template if name changed
                             if template_name_input != st.session_state['editing_template']:
@@ -973,7 +996,7 @@ def customer_communication_hub():
                             st.error("Please fill in all fields.")
 
                 with col_save2:
-                    if st.button("❌ Cancel", width='stretch'):
+                    if st.button("❌ Cancel", width="stretch"):
                         del st.session_state["editing_template"]
                         if "edit_template_content" in st.session_state:
                             del st.session_state["edit_template_content"]
@@ -993,7 +1016,7 @@ def customer_communication_hub():
                     placeholder="Enter your message template here...\n\nTip: Use placeholders like {customer_name}, {order_number} for personalization"
                 )
 
-                if st.button("➕ Create Template", type="primary", width='stretch'):
+                if st.button("➕ Create Template", type="primary", width="stretch"):
                     if template_name_input.strip() and template_content.strip():
                         if template_name_input in templates:
                             st.error("Template name already exists. Choose a different name.")
@@ -1023,7 +1046,7 @@ def customer_communication_hub():
                     data=templates_json,
                     file_name=f"message_templates_{datetime.now().strftime('%Y%m%d')}.json",
                     mime="application/json",
-                    use_container_width=True
+                    width="stretch"
                 )
 
         with col_exp2:
@@ -1179,7 +1202,7 @@ def customer_communication_hub():
                     st.error("Please provide platform name and API key.")
 
         st.markdown("---")
-        if st.button("🧪 Test All Connections", type="primary", use_container_width=True):
+        if st.button("🧪 Test All Connections", type="primary", width="stretch"):
             st.info("🔄 Testing connections... (This feature will be activated once APIs are configured)")
             for platform, config in api_config.items():
                 if config.get("configured"):
@@ -1599,7 +1622,7 @@ def qr_code_content_hub():
                 search_term = st.text_input("🔍 Search QR codes:", placeholder="Search by title...")
 
             with col_f2:
-                if st.button("🔄 Refresh", use_container_width=True):
+                if st.button("🔄 Refresh", width="stretch"):
                     st.rerun()
 
             # Filter QR codes
@@ -1617,7 +1640,7 @@ def qr_code_content_hub():
                         # Display QR code
                         qr_image_path = os.path.join(QR_CODES_DIR, f"{qr_id}.png")
                         if os.path.exists(qr_image_path):
-                            st.image(qr_image_path, caption=f"QR Code: {qr_id}", use_container_width=True)
+                            st.image(qr_image_path, caption=f"QR Code: {qr_id}", width="stretch")
 
                             # Download QR code
                             with open(qr_image_path, 'rb') as f:
@@ -1626,7 +1649,7 @@ def qr_code_content_hub():
                                     data=f,
                                     file_name=f"qr_{qr_id}.png",
                                     mime="image/png",
-                                    use_container_width=True,
+                                    width="stretch",
                                     key=f"download_{qr_id}"
                                 )
 
@@ -1657,7 +1680,7 @@ def qr_code_content_hub():
                                     html_content = f.read()
                                     html_b64 = base64.b64encode(html_content.encode()).decode()
 
-                                if st.button("👁️ View", key=f"view_{qr_id}", use_container_width=True):
+                                if st.button("👁️ View", key=f"view_{qr_id}", width="stretch"):
                                     st.components.v1.html(f"""
                                         <script>
                                             var newWindow = window.open('', '_blank');
@@ -1669,12 +1692,12 @@ def qr_code_content_hub():
                                     st.success("✅ Content page opened in new tab!")
 
                         with col_a2:
-                            if st.button("✏️ Edit", key=f"edit_qr_{qr_id}", use_container_width=True):
+                            if st.button("✏️ Edit", key=f"edit_qr_{qr_id}", width="stretch"):
                                 st.session_state["editing_qr"] = qr_id
                                 st.rerun()
 
                         with col_a3:
-                            if st.button("🗑️ Delete", key=f"delete_{qr_id}", use_container_width=True):
+                            if st.button("🗑️ Delete", key=f"delete_{qr_id}", width="stretch"):
                                 # Delete files
                                 qr_img = os.path.join(QR_CODES_DIR, f"{qr_id}.png")
                                 content_html = os.path.join(QR_CONTENT_DIR, f"{qr_id}.html")
@@ -1761,7 +1784,7 @@ def qr_code_content_hub():
             )
 
             if uploaded_image:
-                st.image(uploaded_image, caption="Preview", use_container_width=True)
+                st.image(uploaded_image, caption="Preview", width="stretch")
 
         with col_media2:
             st.markdown("**🎬 Video**")
@@ -1883,7 +1906,7 @@ def qr_code_content_hub():
         st.markdown("---")
 
         # Generate button
-        if st.button("🎨 Generate QR Code", type="primary", use_container_width=True):
+        if st.button("🎨 Generate QR Code", type="primary", width="stretch"):
             if not title:
                 st.error("Please provide a title!")
             else:
@@ -2161,7 +2184,7 @@ def file_processor_tool(tool_name):
                 
                 with col_temp2:
                     if selected_template_name != "<New Template>":
-                        if st.button("🗑️ Delete Template", key=f"delete_{selected_template_name}", use_container_width=True):
+                        if st.button("🗑️ Delete Template", key=f"delete_{selected_template_name}", width="stretch"):
                             del templates[selected_template_name]
                             save_templates(tool_name, templates)
                             st.success(f"Template **'{selected_template_name}'** deleted!")
@@ -2272,7 +2295,7 @@ def file_processor_tool(tool_name):
                 st.markdown("---")
                 st.subheader("3. Preview and Export")
 
-                st.dataframe(processed_df, use_container_width=True)
+                st.dataframe(clean_dataframe_for_display(processed_df), width="stretch")
                 
                 if not processed_df.empty:
                     html_table = processed_df.to_html(index=False, border=1, escape=False)
@@ -2312,7 +2335,7 @@ def file_processor_tool(tool_name):
                     with col1:
                         st.markdown("### 🖨️ Print Options")
                         
-                        if st.button("🖨️ Open Print Preview", type="primary", use_container_width=True, key="open_print_preview"):
+                        if st.button("🖨️ Open Print Preview", type="primary", width="stretch", key="open_print_preview"):
                             b64_html = base64.b64encode(print_html.encode()).decode()
                             
                             st.components.v1.html(f"""
@@ -2337,7 +2360,7 @@ def file_processor_tool(tool_name):
                             file_name=f"{tool_name.replace(' ', '_')}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.html",
                             mime="text/html",
                             help="Download HTML file if print preview doesn't work",
-                            use_container_width=True
+                            width="stretch"
                         )
 
                     with col2:
@@ -2351,7 +2374,7 @@ def file_processor_tool(tool_name):
                                     key="rename_template_input"
                                 )
                                 
-                                if st.button("💾 Save Changes", key="update_template", use_container_width=True):
+                                if st.button("💾 Save Changes", key="update_template", width="stretch"):
                                     final_name = rename_template.strip() if rename_template.strip() else selected_template_name
                                     
                                     if final_name != selected_template_name and final_name in templates:
@@ -2386,7 +2409,7 @@ def file_processor_tool(tool_name):
                         st.subheader("📥 Export Data")
                         
                         if tool_name == DRIVER_KEY:
-                            if st.button("💾 Save for PDF Labeling", use_container_width=True, type="primary"):
+                            if st.button("💾 Save for PDF Labeling", width="stretch", type="primary"):
                                 try:
                                     # Try to detect driver name from the data
                                     driver_name = None
@@ -2431,7 +2454,7 @@ def file_processor_tool(tool_name):
                             data=csv_data,
                             file_name=f"processed_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
                             mime="text/csv",
-                            use_container_width=True
+                            width="stretch"
                         )
 
         except Exception as e:
