@@ -1324,10 +1324,10 @@ def qr_code_content_hub():
             video_url = content_data['video_url']
             if 'youtube.com' in video_url or 'youtu.be' in video_url:
                 video_id = video_url.split('v=')[-1].split('&')[0] if 'v=' in video_url else video_url.split('/')[-1]
-                video_html = f'<div class="video-container"><iframe src="https://www.youtube.com/embed/{video_id}" frameborder="0" allowfullscreen></iframe></div>'
+                video_html = f'<div class="video-container"><iframe src="https://www.youtube.com/embed/{video_id}" style="border: none;" allowfullscreen></iframe></div>'
             elif 'vimeo.com' in video_url:
                 video_id = video_url.split('/')[-1]
-                video_html = f'<div class="video-container"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allowfullscreen></iframe></div>'
+                video_html = f'<div class="video-container"><iframe src="https://player.vimeo.com/video/{video_id}" style="border: none;" allowfullscreen></iframe></div>'
             else:
                 video_html = f'<div class="video-container"><video controls><source src="{video_url}"></video></div>'
         elif video_b64:
