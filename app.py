@@ -60,10 +60,6 @@ try:
 except ImportError:
     QR_SUPPORT = False
 
-import base64
-import hashlib
-import uuid
-
 # Configuration for Template Storage
 TEMPLATE_DIR = "templates"
 SAVED_FILES_DIR = "saved_files"
