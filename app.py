@@ -4,6 +4,10 @@ import json
 import os
 import zipfile
 import io
+import base64
+import hashlib
+import uuid
+import traceback
 from datetime import datetime
 
 # Time-based gradient functions
@@ -48,17 +52,32 @@ try:
 except ImportError:
     PDF_SUPPORT = False
 
+# Try to import QR code libraries
+try:
+    import qrcode
+    from PIL import Image
+    QR_SUPPORT = True
+except ImportError:
+    QR_SUPPORT = False
+
+import base64
+import hashlib
+import uuid
+
 # Configuration for Template Storage
 TEMPLATE_DIR = "templates"
 SAVED_FILES_DIR = "saved_files"
 MESSAGES_DIR = "messages"
+QR_CODES_DIR = "qr_codes"
+QR_CONTENT_DIR = "qr_content"
 DRIVER_KEY = "Driver Run Sheet Processor"
 KITCHEN_KEY = "Kitchen Order List Processor"
 PDF_LABEL_KEY = "PDF Label Numbering"
 COMMS_KEY = "Customer Communication Hub"
+QR_KEY = "QR Code Content Hub"
 
 # Create directories if they don't exist
-for directory in [TEMPLATE_DIR, SAVED_FILES_DIR, MESSAGES_DIR]:
+for directory in [TEMPLATE_DIR, SAVED_FILES_DIR, MESSAGES_DIR, QR_CODES_DIR, QR_CONTENT_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -166,6 +185,27 @@ def load_saved_file(filename):
     else:
         return pd.read_excel(filepath)
 
+def clean_dataframe_for_display(df):
+    """Clean DataFrame data types to prevent PyArrow serialization errors."""
+    if df is None or df.empty:
+        return df
+    
+    # Create a copy to avoid modifying the original
+    df_clean = df.copy()
+    
+    # Convert all columns to string to ensure consistent data types
+    for col in df_clean.columns:
+        try:
+            # Convert to string, handling NaN values
+            df_clean[col] = df_clean[col].astype(str)
+            # Replace 'nan' string with empty string for better display
+            df_clean[col] = df_clean[col].replace('nan', '')
+        except Exception:
+            # If conversion fails, keep original column
+            continue
+    
+    return df_clean
+
 def process_data(df, template_config):
     """Applies column selection and reordering based on the template."""
     if not df.empty and template_config and 'columns' in template_config:
@@ -227,15 +267,15 @@ def pdf_label_numbering_tool():
         with col1:
             # Show a preview of the current file
             with st.expander("📊 Current Driver Data Preview", expanded=False):
-                st.dataframe(df_info.head(10), use_container_width=True)
+                st.dataframe(clean_dataframe_for_display(df_info.head(10)), width="stretch")
         
         with col2:
-            if st.button("🔄 Load Different File", use_container_width=True):
+            if st.button("🔄 Load Different File", width="stretch"):
                 # Clear the current driver data to allow selecting a new one
                 st.session_state.loaded_driver_df = None
                 st.rerun()
             
-            if st.button("🗑️ Clear All Settings", use_container_width=True, help="Reset column mappings and driver selections"):
+            if st.button("🗑️ Clear All Settings", width="stretch", help="Reset column mappings and driver selections"):
                 # Clear all PDF tool settings
                 st.session_state.pdf_stop_column = None
                 st.session_state.pdf_order_column = None
@@ -311,7 +351,7 @@ def pdf_label_numbering_tool():
                     help="Files are sorted by date (newest first). Driver names are extracted when available."
                 )
                 
-                if st.button("📂 Load This File", use_container_width=True):
+                if st.button("📂 Load This File", width="stretch"):
                     try:
                         driver_df = load_saved_file(selected_saved_file)
                         driver_df = driver_df.dropna(how='all')
@@ -519,7 +559,7 @@ def pdf_label_numbering_tool():
         
         with st.expander("🔍 Preview Order Mapping"):
             mapping_df = pd.DataFrame(list(order_to_stop.items()), columns=['Order Ref', 'Stop #'])
-            st.dataframe(mapping_df.head(20), use_container_width=True)
+            st.dataframe(clean_dataframe_for_display(mapping_df.head(20)), width="stretch")
         
         st.markdown("---")
         
@@ -562,7 +602,7 @@ def pdf_label_numbering_tool():
             st.write(f"• Position: ({x_position}, {y_offset})")
             st.info("💡 Increase Y to move DOWN")
             
-            if st.button("💾 Save These Settings as Default", use_container_width=True):
+            if st.button("💾 Save These Settings as Default", width="stretch"):
                 new_settings = {
                     "font_size": font_size,
                     "x_position": x_position,
@@ -580,7 +620,7 @@ def pdf_label_numbering_tool():
         reader = PdfReader(label_pdf)
         st.write(f"**📄 Found {len(reader.pages)} label(s) in PDF**")
         
-        if st.button("🎨 Add Route Numbers to Labels", type="primary", use_container_width=True):
+        if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
                     writer = PdfWriter()
@@ -646,7 +686,7 @@ def pdf_label_numbering_tool():
                         data=output,
                         file_name=f"numbered_labels_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
-                        use_container_width=True
+                        width="stretch"
                     )
                     
                     st.balloons()
@@ -758,7 +798,7 @@ def customer_communication_hub():
             )
 
         with col3:
-            if st.button("🔄 Refresh", use_container_width=True):
+            if st.button("🔄 Refresh", width="stretch"):
                 st.rerun()
 
         # Apply filters
@@ -823,7 +863,7 @@ def customer_communication_hub():
                             )
                         with col_t2:
                             if selected_template != "None":
-                                if st.button("📋 Insert", key=f"insert_template_{msg['id']}", use_container_width=True):
+                                if st.button("📋 Insert", key=f"insert_template_{msg['id']}", width="stretch"):
                                     st.session_state[f"reply_text_{msg['id']}"] = templates[selected_template]["content"]
                                     st.rerun()
 
@@ -838,7 +878,7 @@ def customer_communication_hub():
 
                     col_r1, col_r2 = st.columns([1, 4])
                     with col_r1:
-                        if st.button("📤 Send Reply", key=f"send_{msg['id']}", type="primary", use_container_width=True):
+                        if st.button("📤 Send Reply", key=f"send_{msg['id']}", type="primary", width="stretch"):
                             if reply_text.strip():
                                 # Add reply to conversation
                                 if "replies" not in msg:
@@ -861,7 +901,7 @@ def customer_communication_hub():
                                 st.error("Please enter a reply message.")
 
                     with col_r2:
-                        if st.button("📝 Add Internal Note", key=f"note_{msg['id']}", use_container_width=True):
+                        if st.button("📝 Add Internal Note", key=f"note_{msg['id']}", width="stretch"):
                             st.info("Internal notes feature - Coming soon!")
 
     # TAB 2: TEMPLATES LIBRARY
@@ -889,19 +929,19 @@ def customer_communication_hub():
                         col_t1, col_t2, col_t3 = st.columns(3)
 
                         with col_t1:
-                            if st.button("✏️ Edit", key=f"edit_{template_name}", use_container_width=True):
+                            if st.button("✏️ Edit", key=f"edit_{template_name}", width="stretch"):
                                 st.session_state["editing_template"] = template_name
                                 st.session_state["edit_template_content"] = template_data["content"]
                                 st.session_state["edit_template_category"] = template_data.get("category", "General")
                                 st.rerun()
 
                         with col_t2:
-                            if st.button("📋 Copy", key=f"copy_{template_name}", use_container_width=True):
+                            if st.button("📋 Copy", key=f"copy_{template_name}", width="stretch"):
                                 st.session_state["clipboard"] = template_data["content"]
                                 st.success("Copied to clipboard!")
 
                         with col_t3:
-                            if st.button("🗑️ Delete", key=f"del_{template_name}", use_container_width=True):
+                            if st.button("🗑️ Delete", key=f"del_{template_name}", width="stretch"):
                                 del templates[template_name]
                                 save_message_templates(templates)
                                 st.success(f"Template '{template_name}' deleted!")
@@ -930,7 +970,7 @@ def customer_communication_hub():
 
                 col_save1, col_save2 = st.columns(2)
                 with col_save1:
-                    if st.button("💾 Save Changes", type="primary", use_container_width=True):
+                    if st.button("💾 Save Changes", type="primary", width="stretch"):
                         if template_name_input.strip() and template_content.strip():
                             # Remove old template if name changed
                             if template_name_input != st.session_state['editing_template']:
@@ -956,7 +996,7 @@ def customer_communication_hub():
                             st.error("Please fill in all fields.")
 
                 with col_save2:
-                    if st.button("❌ Cancel", use_container_width=True):
+                    if st.button("❌ Cancel", width="stretch"):
                         del st.session_state["editing_template"]
                         if "edit_template_content" in st.session_state:
                             del st.session_state["edit_template_content"]
@@ -976,7 +1016,7 @@ def customer_communication_hub():
                     placeholder="Enter your message template here...\n\nTip: Use placeholders like {customer_name}, {order_number} for personalization"
                 )
 
-                if st.button("➕ Create Template", type="primary", use_container_width=True):
+                if st.button("➕ Create Template", type="primary", width="stretch"):
                     if template_name_input.strip() and template_content.strip():
                         if template_name_input in templates:
                             st.error("Template name already exists. Choose a different name.")
@@ -1006,7 +1046,7 @@ def customer_communication_hub():
                     data=templates_json,
                     file_name=f"message_templates_{datetime.now().strftime('%Y%m%d')}.json",
                     mime="application/json",
-                    use_container_width=True
+                    width="stretch"
                 )
 
         with col_exp2:
@@ -1162,7 +1202,7 @@ def customer_communication_hub():
                     st.error("Please provide platform name and API key.")
 
         st.markdown("---")
-        if st.button("🧪 Test All Connections", type="primary", use_container_width=True):
+        if st.button("🧪 Test All Connections", type="primary", width="stretch"):
             st.info("🔄 Testing connections... (This feature will be activated once APIs are configured)")
             for platform, config in api_config.items():
                 if config.get("configured"):
@@ -1216,6 +1256,774 @@ def customer_communication_hub():
 
         for msg in recent_messages:
             st.markdown(f"**{msg['timestamp']}** - [{msg['platform']}] {msg['customer_name']}: {msg['subject']}")
+
+def qr_code_content_hub():
+    """QR Code generator with rich media content - videos, images, links, and more."""
+
+    st.header("📱 QR Code Content Hub")
+    st.markdown("**Generate QR codes that link to rich content pages with videos, images, and interactive buttons**")
+
+    if not QR_SUPPORT:
+        st.error("❌ QR Code support not available!")
+        st.code("pip install qrcode Pillow", language="bash")
+        st.info("Run this command in your terminal, then restart the app.")
+        return
+
+    # File paths
+    qr_database_file = os.path.join(TEMPLATE_DIR, "qr_database.json")
+
+    # Helper functions
+    def load_qr_database():
+        try:
+            with open(qr_database_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    def save_qr_database(database):
+        with open(qr_database_file, 'w') as f:
+            json.dump(database, f, indent=4)
+
+    def generate_qr_id():
+        return str(uuid.uuid4())[:8]
+
+    def save_uploaded_file(uploaded_file, qr_id, file_type):
+        """Save uploaded file and return the path"""
+        file_extension = uploaded_file.name.split('.')[-1]
+        filename = f"{qr_id}_{file_type}.{file_extension}"
+        filepath = os.path.join(QR_CONTENT_DIR, filename)
+        with open(filepath, 'wb') as f:
+            f.write(uploaded_file.getbuffer())
+        return filename
+
+    def get_file_as_base64(filepath):
+        """Convert file to base64 for embedding in HTML"""
+        try:
+            with open(filepath, 'rb') as f:
+                return base64.b64encode(f.read()).decode()
+        except:
+            return None
+
+    def generate_content_html(qr_id, content_data):
+        """Generate beautiful mobile-friendly HTML page for QR content"""
+
+        # Get files
+        image_path = None
+        video_path = None
+
+        if content_data.get('image_file'):
+            image_path = os.path.join(QR_CONTENT_DIR, content_data['image_file'])
+        if content_data.get('video_file'):
+            video_path = os.path.join(QR_CONTENT_DIR, content_data['video_file'])
+
+        # Get base64 encoded media
+        image_b64 = get_file_as_base64(image_path) if image_path and os.path.exists(image_path) else None
+        video_b64 = get_file_as_base64(video_path) if video_path and os.path.exists(video_path) else None
+
+        # Build buttons HTML
+        buttons_html = ""
+        for button in content_data.get('buttons', []):
+            icon_map = {
+                'Call': '📞',
+                'Email': '📧',
+                'WhatsApp': '💬',
+                'Website': '🌐',
+                'Order Now': '🛒',
+                'Book Now': '📅',
+                'Learn More': 'ℹ️',
+                'Custom': '🔗'
+            }
+            icon = icon_map.get(button['type'], '🔗')
+            buttons_html += f"""
+            <a href="{button['url']}" class="action-button" target="_blank">
+                {icon} {button['label']}
+            </a>
+            """
+
+        # Video HTML
+        video_html = ""
+        if content_data.get('video_url'):
+            # YouTube/Vimeo embed
+            video_url = content_data['video_url']
+            if 'youtube.com' in video_url or 'youtu.be' in video_url:
+                video_id = video_url.split('v=')[-1].split('&')[0] if 'v=' in video_url else video_url.split('/')[-1]
+                video_html = f'<div class="video-container"><iframe src="https://www.youtube.com/embed/{video_id}" style="border: none;" allowfullscreen></iframe></div>'
+            elif 'vimeo.com' in video_url:
+                video_id = video_url.split('/')[-1]
+                video_html = f'<div class="video-container"><iframe src="https://player.vimeo.com/video/{video_id}" style="border: none;" allowfullscreen></iframe></div>'
+            else:
+                video_html = f'<div class="video-container"><video controls><source src="{video_url}"></video></div>'
+        elif video_b64:
+            video_html = f'<div class="video-container"><video controls><source src="data:video/mp4;base64,{video_b64}"></video></div>'
+
+        # Image HTML
+        image_html = ""
+        if image_b64:
+            ext = content_data['image_file'].split('.')[-1].lower()
+            mime_type = f"image/{ext}" if ext != 'jpg' else "image/jpeg"
+            image_html = f'<img src="data:{mime_type};base64,{image_b64}" class="content-image" alt="{content_data.get("title", "")}">'
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{content_data.get('title', 'Content Page')}</title>
+            <style>
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                    color: #333;
+                }}
+
+                .container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 20px;
+                    overflow: hidden;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    animation: slideUp 0.5s ease;
+                }}
+
+                @keyframes slideUp {{
+                    from {{
+                        opacity: 0;
+                        transform: translateY(30px);
+                    }}
+                    to {{
+                        opacity: 1;
+                        transform: translateY(0);
+                    }}
+                }}
+
+                .header {{
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 30px 20px;
+                    text-align: center;
+                }}
+
+                .header h1 {{
+                    font-size: 28px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }}
+
+                .content {{
+                    padding: 30px 20px;
+                }}
+
+                .content-image {{
+                    width: 100%;
+                    border-radius: 15px;
+                    margin-bottom: 20px;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                }}
+
+                .video-container {{
+                    position: relative;
+                    width: 100%;
+                    padding-bottom: 56.25%;
+                    margin-bottom: 20px;
+                    border-radius: 15px;
+                    overflow: hidden;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                }}
+
+                .video-container iframe,
+                .video-container video {{
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                }}
+
+                .description {{
+                    font-size: 16px;
+                    line-height: 1.6;
+                    color: #555;
+                    margin-bottom: 30px;
+                    white-space: pre-wrap;
+                }}
+
+                .buttons {{
+                    display: flex;
+                    flex-direction: column;
+                    gap: 15px;
+                }}
+
+                .action-button {{
+                    display: block;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    text-decoration: none;
+                    padding: 15px 25px;
+                    border-radius: 12px;
+                    text-align: center;
+                    font-size: 16px;
+                    font-weight: 600;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                }}
+
+                .action-button:hover {{
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+                }}
+
+                .footer {{
+                    text-align: center;
+                    padding: 20px;
+                    color: #999;
+                    font-size: 12px;
+                    border-top: 1px solid #eee;
+                }}
+
+                @media (max-width: 480px) {{
+                    .header h1 {{
+                        font-size: 24px;
+                    }}
+
+                    .content {{
+                        padding: 20px 15px;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>{content_data.get('title', 'Welcome')}</h1>
+                </div>
+
+                <div class="content">
+                    {image_html}
+                    {video_html}
+
+                    <div class="description">
+                        {content_data.get('description', '')}
+                    </div>
+
+                    <div class="buttons">
+                        {buttons_html}
+                    </div>
+                </div>
+
+                <div class="footer">
+                    Powered by Business Automation Platform
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        # Save HTML file
+        html_path = os.path.join(QR_CONTENT_DIR, f"{qr_id}.html")
+        try:
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+        except OSError as e:
+            raise IOError(f"Failed to save HTML content for QR {qr_id}: {e}")
+
+        return html_path
+
+    def generate_qr_code(qr_id, data, settings):
+        """Generate QR code image"""
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
+            box_size=settings.get('size', 10),
+            border=4,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        # Create QR code image
+        img = qr.make_image(fill_color=settings.get('color', 'black'), back_color=settings.get('bg_color', 'white'))
+
+        # Save QR code
+        qr_path = os.path.join(QR_CODES_DIR, f"{qr_id}.png")
+        img.save(qr_path)
+
+        return qr_path
+
+    # Content templates
+    CONTENT_TEMPLATES = {
+        "Menu Item": {
+            "title": "Special Dish",
+            "description": "Our chef's signature creation made with fresh, local ingredients.\n\nPrice: $25.99\nPreparation time: 30 minutes",
+            "buttons": [
+                {"type": "Order Now", "label": "Order Now", "url": "https://your-ordering-link.com"},
+                {"type": "Call", "label": "Call to Order", "url": "tel:+1234567890"}
+            ]
+        },
+        "Product Showcase": {
+            "title": "Featured Product",
+            "description": "High-quality product with amazing features.\n\nCheck out the video to see it in action!",
+            "buttons": [
+                {"type": "Website", "label": "Visit Store", "url": "https://your-store.com"},
+                {"type": "Learn More", "label": "More Info", "url": "https://your-store.com/product"}
+            ]
+        },
+        "Promotional Offer": {
+            "title": "🎉 Special Offer!",
+            "description": "Limited time promotion!\n\nGet 20% off your next order.\n\nUse code: SAVE20\n\nOffer valid until the end of the month.",
+            "buttons": [
+                {"type": "Order Now", "label": "Claim Offer", "url": "https://your-store.com/offer"},
+                {"type": "WhatsApp", "label": "WhatsApp Us", "url": "https://wa.me/1234567890"}
+            ]
+        },
+        "Event Invitation": {
+            "title": "You're Invited!",
+            "description": "Join us for a special event!\n\nDate: [Event Date]\nTime: [Event Time]\nLocation: [Venue]\n\nDon't miss out!",
+            "buttons": [
+                {"type": "Book Now", "label": "RSVP Now", "url": "https://your-event-page.com"},
+                {"type": "Email", "label": "Email Us", "url": "mailto:events@yourbusiness.com"}
+            ]
+        },
+        "Contact Card": {
+            "title": "Contact Information",
+            "description": "Get in touch with us!\n\nPhone: +123-456-7890\nEmail: info@yourbusiness.com\nAddress: 123 Business St, City\n\nWe're here to help!",
+            "buttons": [
+                {"type": "Call", "label": "Call Now", "url": "tel:+1234567890"},
+                {"type": "Email", "label": "Send Email", "url": "mailto:info@yourbusiness.com"},
+                {"type": "WhatsApp", "label": "WhatsApp", "url": "https://wa.me/1234567890"}
+            ]
+        }
+    }
+
+    # Main tabs
+    tab1, tab2, tab3 = st.tabs(["📱 My QR Codes", "➕ Create New", "📊 Analytics"])
+
+    # TAB 1: MY QR CODES
+    with tab1:
+        st.subheader("Your QR Code Library")
+
+        qr_database = load_qr_database()
+
+        if not qr_database:
+            st.info("📭 No QR codes yet. Create your first QR code in the 'Create New' tab!")
+        else:
+            # Filter options
+            col_f1, col_f2 = st.columns([3, 1])
+
+            with col_f1:
+                search_term = st.text_input("🔍 Search QR codes:", placeholder="Search by title...")
+
+            with col_f2:
+                if st.button("🔄 Refresh", width="stretch"):
+                    st.rerun()
+
+            # Filter QR codes
+            filtered_qrs = {k: v for k, v in qr_database.items()
+                           if not search_term or search_term.lower() in v.get('title', '').lower()}
+
+            st.markdown(f"**Showing {len(filtered_qrs)} QR code(s)**")
+
+            # Display QR codes
+            for qr_id, qr_data in filtered_qrs.items():
+                with st.expander(f"📱 {qr_data.get('title', 'Untitled')} - ID: {qr_id}", expanded=False):
+                    col_qr1, col_qr2 = st.columns([1, 2])
+
+                    with col_qr1:
+                        # Display QR code
+                        qr_image_path = os.path.join(QR_CODES_DIR, f"{qr_id}.png")
+                        if os.path.exists(qr_image_path):
+                            st.image(qr_image_path, caption=f"QR Code: {qr_id}", width="stretch")
+
+                            # Download QR code
+                            with open(qr_image_path, 'rb') as f:
+                                st.download_button(
+                                    label="⬇️ Download QR",
+                                    data=f,
+                                    file_name=f"qr_{qr_id}.png",
+                                    mime="image/png",
+                                    width="stretch",
+                                    key=f"download_{qr_id}"
+                                )
+
+                    with col_qr2:
+                        st.markdown(f"**Title:** {qr_data.get('title', 'N/A')}")
+                        st.markdown(f"**Created:** {qr_data.get('created', 'N/A')}")
+                        st.markdown(f"**Template:** {qr_data.get('template', 'Custom')}")
+                        st.markdown(f"**Status:** {'✅ Active' if qr_data.get('active', True) else '❌ Inactive'}")
+
+                        # Show content preview
+                        with st.expander("👁️ Preview Content"):
+                            st.markdown(f"**Description:**")
+                            st.info(qr_data.get('description', 'No description'))
+
+                            if qr_data.get('buttons'):
+                                st.markdown(f"**Buttons:** {len(qr_data['buttons'])}")
+                                for btn in qr_data['buttons']:
+                                    st.markdown(f"- {btn['label']}")
+
+                        # Action buttons
+                        col_a1, col_a2, col_a3 = st.columns(3)
+
+                        with col_a1:
+                            # View content page
+                            content_path = os.path.join(QR_CONTENT_DIR, f"{qr_id}.html")
+                            if os.path.exists(content_path):
+                                with open(content_path, 'r', encoding='utf-8') as f:
+                                    html_content = f.read()
+                                    html_b64 = base64.b64encode(html_content.encode()).decode()
+
+                                if st.button("👁️ View", key=f"view_{qr_id}", width="stretch"):
+                                    st.components.v1.html(f"""
+                                        <script>
+                                            var newWindow = window.open('', '_blank');
+                                            var htmlContent = atob('{html_b64}');
+                                            newWindow.document.write(htmlContent);
+                                            newWindow.document.close();
+                                        </script>
+                                    """, height=0)
+                                    st.success("✅ Content page opened in new tab!")
+
+                        with col_a2:
+                            if st.button("✏️ Edit", key=f"edit_qr_{qr_id}", width="stretch"):
+                                st.session_state["editing_qr"] = qr_id
+                                st.rerun()
+
+                        with col_a3:
+                            if st.button("🗑️ Delete", key=f"delete_{qr_id}", width="stretch"):
+                                # Delete files
+                                qr_img = os.path.join(QR_CODES_DIR, f"{qr_id}.png")
+                                content_html = os.path.join(QR_CONTENT_DIR, f"{qr_id}.html")
+                                if os.path.exists(qr_img):
+                                    os.remove(qr_img)
+                                if os.path.exists(content_html):
+                                    os.remove(content_html)
+
+                                # Remove from database
+                                del qr_database[qr_id]
+                                save_qr_database(qr_database)
+                                st.success(f"QR code {qr_id} deleted!")
+                                st.rerun()
+
+    # TAB 2: CREATE NEW
+    with tab2:
+        st.subheader("Create New QR Code")
+
+        # Check if editing existing QR
+        editing_qr_id = st.session_state.get("editing_qr")
+        if editing_qr_id:
+            qr_database = load_qr_database()
+            if editing_qr_id in qr_database:
+                st.info(f"✏️ **Editing QR Code:** {editing_qr_id}")
+                existing_data = qr_database[editing_qr_id]
+
+                if st.button("❌ Cancel Editing"):
+                    del st.session_state["editing_qr"]
+                    st.rerun()
+            else:
+                st.error("QR code not found!")
+                del st.session_state["editing_qr"]
+                existing_data = None
+        else:
+            existing_data = None
+
+        # Template selection
+        st.markdown("### 1️⃣ Choose Template")
+
+        template_choice = st.selectbox(
+            "Select a template to start with:",
+            ["Custom"] + list(CONTENT_TEMPLATES.keys()),
+            key="template_selector"
+        )
+
+        if template_choice != "Custom" and not existing_data:
+            if st.button("📋 Load Template"):
+                st.session_state["template_data"] = CONTENT_TEMPLATES[template_choice]
+                st.rerun()
+
+        # Get template data
+        template_data = existing_data or st.session_state.get("template_data", {})
+
+        st.markdown("---")
+        st.markdown("### 2️⃣ Content Details")
+
+        # Title and description
+        title = st.text_input(
+            "Title:",
+            value=template_data.get('title', ''),
+            placeholder="e.g., Special Menu Item",
+            key="qr_title"
+        )
+
+        description = st.text_area(
+            "Description:",
+            value=template_data.get('description', ''),
+            height=150,
+            placeholder="Enter your content description...\n\nYou can use multiple lines.",
+            key="qr_description"
+        )
+
+        st.markdown("---")
+        st.markdown("### 3️⃣ Media Files")
+
+        col_media1, col_media2 = st.columns(2)
+
+        with col_media1:
+            st.markdown("**📷 Image**")
+            uploaded_image = st.file_uploader(
+                "Upload image (optional):",
+                type=['png', 'jpg', 'jpeg'],
+                key="qr_image"
+            )
+
+            if uploaded_image:
+                st.image(uploaded_image, caption="Preview", width="stretch")
+
+        with col_media2:
+            st.markdown("**🎬 Video**")
+            video_option = st.radio(
+                "Video source:",
+                ["None", "Upload File", "YouTube/Vimeo URL"],
+                key="video_option"
+            )
+
+            uploaded_video = None
+            video_url = None
+
+            if video_option == "Upload File":
+                uploaded_video = st.file_uploader(
+                    "Upload video:",
+                    type=['mp4', 'mov', 'avi'],
+                    key="qr_video"
+                )
+                if uploaded_video:
+                    st.success(f"✅ {uploaded_video.name}")
+
+            elif video_option == "YouTube/Vimeo URL":
+                video_url = st.text_input(
+                    "Video URL:",
+                    placeholder="https://youtube.com/watch?v=...",
+                    key="qr_video_url"
+                )
+
+        st.markdown("---")
+        st.markdown("### 4️⃣ Action Buttons")
+
+        # Initialize buttons from template
+        if "qr_buttons" not in st.session_state:
+            st.session_state["qr_buttons"] = template_data.get('buttons', [])
+
+        # Display existing buttons
+        for idx, button in enumerate(st.session_state["qr_buttons"]):
+            col_b1, col_b2, col_b3, col_b4 = st.columns([2, 2, 3, 1])
+
+            with col_b1:
+                st.text_input(
+                    "Type:",
+                    value=button['type'],
+                    disabled=True,
+                    key=f"btn_type_{idx}"
+                )
+
+            with col_b2:
+                st.text_input(
+                    "Label:",
+                    value=button['label'],
+                    disabled=True,
+                    key=f"btn_label_{idx}"
+                )
+
+            with col_b3:
+                st.text_input(
+                    "URL:",
+                    value=button['url'],
+                    disabled=True,
+                    key=f"btn_url_{idx}"
+                )
+
+            with col_b4:
+                if st.button("🗑️", key=f"remove_btn_{idx}"):
+                    st.session_state["qr_buttons"].pop(idx)
+                    st.rerun()
+
+        # Add new button
+        with st.expander("➕ Add Action Button"):
+            col_nb1, col_nb2 = st.columns(2)
+
+            with col_nb1:
+                new_btn_type = st.selectbox(
+                    "Button Type:",
+                    ["Call", "Email", "WhatsApp", "Website", "Order Now", "Book Now", "Learn More", "Custom"],
+                    key="new_btn_type"
+                )
+
+            with col_nb2:
+                new_btn_label = st.text_input(
+                    "Button Label:",
+                    value=new_btn_type,
+                    key="new_btn_label"
+                )
+
+            new_btn_url = st.text_input(
+                "Button URL/Link:",
+                placeholder="e.g., https://yoursite.com or tel:+1234567890",
+                key="new_btn_url"
+            )
+
+            if st.button("➕ Add Button"):
+                if new_btn_url:
+                    st.session_state["qr_buttons"].append({
+                        "type": new_btn_type,
+                        "label": new_btn_label,
+                        "url": new_btn_url
+                    })
+                    st.success("Button added!")
+                    st.rerun()
+                else:
+                    st.error("Please provide a URL")
+
+        st.markdown("---")
+        st.markdown("### 5️⃣ QR Code Customization")
+
+        col_qr1, col_qr2, col_qr3 = st.columns(3)
+
+        with col_qr1:
+            qr_color = st.color_picker("QR Color:", "#000000", key="qr_color")
+
+        with col_qr2:
+            qr_bg_color = st.color_picker("Background:", "#FFFFFF", key="qr_bg")
+
+        with col_qr3:
+            qr_size = st.slider("Size:", 5, 15, 10, key="qr_size")
+
+        st.markdown("---")
+
+        # Generate button
+        if st.button("🎨 Generate QR Code", type="primary", width="stretch"):
+            if not title:
+                st.error("Please provide a title!")
+            else:
+                with st.spinner("Creating your QR code..."):
+                    try:
+                        # Generate or use existing ID
+                        qr_id = editing_qr_id or generate_qr_id()
+
+                        # Prepare content data
+                        content_data = {
+                            "title": title,
+                            "description": description,
+                            "buttons": st.session_state["qr_buttons"],
+                            "template": template_choice,
+                            "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "active": True
+                        }
+
+                        # Save uploaded files
+                        if uploaded_image:
+                            image_filename = save_uploaded_file(uploaded_image, qr_id, "image")
+                            content_data['image_file'] = image_filename
+                        elif existing_data and existing_data.get('image_file'):
+                            content_data['image_file'] = existing_data['image_file']
+
+                        if uploaded_video:
+                            video_filename = save_uploaded_file(uploaded_video, qr_id, "video")
+                            content_data['video_file'] = video_filename
+                        elif video_url:
+                            content_data['video_url'] = video_url
+                        elif existing_data and existing_data.get('video_file'):
+                            content_data['video_file'] = existing_data.get('video_file')
+                        elif existing_data and existing_data.get('video_url'):
+                            content_data['video_url'] = existing_data.get('video_url')
+
+                        # Generate content HTML page
+                        html_path = generate_content_html(qr_id, content_data)
+
+                        # Generate QR code pointing to the HTML file
+                        qr_settings = {
+                            'color': qr_color,
+                            'bg_color': qr_bg_color,
+                            'size': qr_size
+                        }
+
+                        # For demo, QR points to local file path
+                        # In production, this would be a web URL
+                        qr_data = f"file://{os.path.abspath(html_path)}"
+                        qr_path = generate_qr_code(qr_id, qr_data, qr_settings)
+
+                        # Save to database
+                        qr_database = load_qr_database()
+                        qr_database[qr_id] = content_data
+                        save_qr_database(qr_database)
+
+                        # Clear session state
+                        if "qr_buttons" in st.session_state:
+                            del st.session_state["qr_buttons"]
+                        if "template_data" in st.session_state:
+                            del st.session_state["template_data"]
+                        if "editing_qr" in st.session_state:
+                            del st.session_state["editing_qr"]
+
+                        st.success(f"✅ QR Code {'updated' if editing_qr_id else 'created'} successfully! ID: {qr_id}")
+                        st.balloons()
+
+                        # Show the generated QR code
+                        st.image(qr_path, caption=f"Your QR Code: {qr_id}", width=300)
+
+                        st.info("💡 **Tip:** Go to the 'My QR Codes' tab to download and manage your QR codes!")
+
+                    except Exception as e:
+                        st.error(f"❌ Error generating QR code: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+    # TAB 3: ANALYTICS
+    with tab3:
+        st.subheader("📊 QR Code Statistics")
+
+        qr_database = load_qr_database()
+
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+
+        with col_stat1:
+            st.metric("Total QR Codes", len(qr_database))
+
+        with col_stat2:
+            active_count = sum(1 for qr in qr_database.values() if qr.get('active', True))
+            st.metric("Active", active_count)
+
+        with col_stat3:
+            templates_used = {}
+            for qr in qr_database.values():
+                template = qr.get('template', 'Custom')
+                templates_used[template] = templates_used.get(template, 0) + 1
+            st.metric("Templates Used", len(templates_used))
+
+        st.markdown("---")
+
+        if qr_database:
+            # Template breakdown
+            st.markdown("### QR Codes by Template")
+            if templates_used:
+                df_templates = pd.DataFrame(list(templates_used.items()), columns=["Template", "Count"])
+                st.bar_chart(df_templates.set_index("Template"))
+
+            st.markdown("---")
+
+            # Recent QR codes
+            st.markdown("### Recent QR Codes")
+            sorted_qrs = sorted(qr_database.items(), key=lambda x: x[1].get('created', ''), reverse=True)[:5]
+
+            for qr_id, qr_data in sorted_qrs:
+                st.markdown(f"**{qr_data.get('created', 'N/A')}** - {qr_data.get('title', 'Untitled')} (ID: {qr_id})")
+        else:
+            st.info("No QR codes created yet. Start creating in the 'Create New' tab!")
 
 def file_processor_tool(tool_name):
     """Generates the UI and logic for a specific file processing tool."""
@@ -1338,7 +2146,6 @@ def file_processor_tool(tool_name):
                 st.subheader("2. Apply or Create Template")
 
                 # Create file hash and safe names early for consistent use
-                import hashlib
                 file_hash = hashlib.md5(uploaded_file.name.encode()).hexdigest()[:8]
                 safe_tool_name = "".join(c for c in tool_name if c.isalnum() or c == "_")[:20]
 
@@ -1377,7 +2184,7 @@ def file_processor_tool(tool_name):
                 
                 with col_temp2:
                     if selected_template_name != "<New Template>":
-                        if st.button("🗑️ Delete Template", key=f"delete_{selected_template_name}", use_container_width=True):
+                        if st.button("🗑️ Delete Template", key=f"delete_{selected_template_name}", width="stretch"):
                             del templates[selected_template_name]
                             save_templates(tool_name, templates)
                             st.success(f"Template **'{selected_template_name}'** deleted!")
@@ -1488,7 +2295,7 @@ def file_processor_tool(tool_name):
                 st.markdown("---")
                 st.subheader("3. Preview and Export")
 
-                st.dataframe(processed_df, use_container_width=True)
+                st.dataframe(clean_dataframe_for_display(processed_df), width="stretch")
                 
                 if not processed_df.empty:
                     html_table = processed_df.to_html(index=False, border=1, escape=False)
@@ -1528,8 +2335,7 @@ def file_processor_tool(tool_name):
                     with col1:
                         st.markdown("### 🖨️ Print Options")
                         
-                        if st.button("🖨️ Open Print Preview", type="primary", use_container_width=True, key="open_print_preview"):
-                            import base64
+                        if st.button("🖨️ Open Print Preview", type="primary", width="stretch", key="open_print_preview"):
                             b64_html = base64.b64encode(print_html.encode()).decode()
                             
                             st.components.v1.html(f"""
@@ -1554,7 +2360,7 @@ def file_processor_tool(tool_name):
                             file_name=f"{tool_name.replace(' ', '_')}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.html",
                             mime="text/html",
                             help="Download HTML file if print preview doesn't work",
-                            use_container_width=True
+                            width="stretch"
                         )
 
                     with col2:
@@ -1568,7 +2374,7 @@ def file_processor_tool(tool_name):
                                     key="rename_template_input"
                                 )
                                 
-                                if st.button("💾 Save Changes", key="update_template", use_container_width=True):
+                                if st.button("💾 Save Changes", key="update_template", width="stretch"):
                                     final_name = rename_template.strip() if rename_template.strip() else selected_template_name
                                     
                                     if final_name != selected_template_name and final_name in templates:
@@ -1603,7 +2409,7 @@ def file_processor_tool(tool_name):
                         st.subheader("📥 Export Data")
                         
                         if tool_name == DRIVER_KEY:
-                            if st.button("💾 Save for PDF Labeling", use_container_width=True, type="primary"):
+                            if st.button("💾 Save for PDF Labeling", width="stretch", type="primary"):
                                 try:
                                     # Try to detect driver name from the data
                                     driver_name = None
@@ -1648,7 +2454,7 @@ def file_processor_tool(tool_name):
                             data=csv_data,
                             file_name=f"processed_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
                             mime="text/csv",
-                            use_container_width=True
+                            width="stretch"
                         )
 
         except Exception as e:
@@ -1787,7 +2593,7 @@ st.markdown("Streamline your daily file processing with reusable templates.")
 st.sidebar.title("🔧 Automation Tools")
 selected_tool = st.sidebar.radio(
     "Select a Processor:",
-    [DRIVER_KEY, KITCHEN_KEY, PDF_LABEL_KEY, COMMS_KEY],
+    [DRIVER_KEY, KITCHEN_KEY, PDF_LABEL_KEY, COMMS_KEY, QR_KEY],
     help="Choose which automation tool to use"
 )
 
@@ -1796,7 +2602,8 @@ tool_descriptions = {
     DRIVER_KEY: "📋 Process driver run sheets - organize delivery routes and stops",
     KITCHEN_KEY: "🍳 Process kitchen order lists - organize food preparation orders",
     PDF_LABEL_KEY: "🏷️ Add route numbers to PDF labels automatically",
-    COMMS_KEY: "💬 Unified inbox for all customer messages - Email, Facebook, Instagram, WhatsApp & more"
+    COMMS_KEY: "💬 Unified inbox for all customer messages - Email, Facebook, Instagram, WhatsApp & more",
+    QR_KEY: "📱 Generate QR codes with rich media content - videos, images, buttons & links"
 }
 
 st.sidebar.markdown("---")
@@ -1807,5 +2614,7 @@ if selected_tool == PDF_LABEL_KEY:
     pdf_label_numbering_tool()
 elif selected_tool == COMMS_KEY:
     customer_communication_hub()
+elif selected_tool == QR_KEY:
+    qr_code_content_hub()
 else:
     file_processor_tool(selected_tool)
