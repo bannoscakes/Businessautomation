@@ -6,8 +6,11 @@ import zipfile
 import io
 import base64
 import hashlib
+
+=======
 import uuid
 import traceback
+
 from datetime import datetime
 
 # Time-based gradient functions
@@ -2331,7 +2334,11 @@ def file_processor_tool(tool_name):
                     with col1:
                         st.markdown("### 🖨️ Print Options")
                         
+
+                        if st.button("🖨️ Open Print Preview", type="primary", use_container_width=True, key="open_print_preview"):
+
                         if st.button("🖨️ Open Print Preview", type="primary", width="stretch", key="open_print_preview"):
+
                             b64_html = base64.b64encode(print_html.encode()).decode()
                             
                             st.components.v1.html(f"""
