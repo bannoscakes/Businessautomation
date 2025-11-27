@@ -6,8 +6,6 @@ import zipfile
 import io
 import base64
 import hashlib
-
-=======
 import uuid
 import traceback
 
@@ -62,6 +60,13 @@ try:
     QR_SUPPORT = True
 except ImportError:
     QR_SUPPORT = False
+
+# Try to import Numbers parser
+try:
+    from numbers_parser import Document
+    NUMBERS_SUPPORT = True
+except ImportError:
+    NUMBERS_SUPPORT = False
 
 # Configuration for Template Storage
 TEMPLATE_DIR = "templates"
@@ -184,6 +189,93 @@ def load_saved_file(filename):
     else:
         return pd.read_excel(filepath)
 
+def read_numbers_file(uploaded_file, sheet_name=None):
+    """Convert Numbers file to pandas DataFrame.
+
+    Args:
+        uploaded_file: The uploaded Numbers file
+        sheet_name: Optional sheet name to read. If None, returns info about all sheets.
+
+    Returns:
+        If sheet_name is None: (None, list of sheet names)
+        If sheet_name is provided: (DataFrame, list of sheet names, selected sheet name)
+    """
+    if not NUMBERS_SUPPORT:
+        raise ImportError("numbers-parser library is not installed")
+
+    # Save uploaded file temporarily
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.numbers') as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        tmp_path = tmp_file.name
+
+    try:
+        # Read the Numbers file
+        doc = Document(tmp_path)
+        sheets = doc.sheets
+
+        if not sheets:
+            raise ValueError("No sheets found in Numbers file")
+
+        # Get all sheet names
+        sheet_names = [sheet.name for sheet in sheets]
+
+        # If no sheet specified, just return the sheet names
+        if sheet_name is None:
+            return None, sheet_names
+
+        # Find the requested sheet
+        selected_sheet = None
+        for sheet in sheets:
+            if sheet.name == sheet_name:
+                selected_sheet = sheet
+                break
+
+        if selected_sheet is None:
+            # If sheet not found, use first sheet
+            selected_sheet = sheets[0]
+            sheet_name = selected_sheet.name
+
+        tables = selected_sheet.tables
+
+        if not tables:
+            raise ValueError(f"No tables found in sheet '{sheet_name}'")
+
+        table = tables[0]
+
+        # Extract data from the table
+        data = []
+        num_rows = table.num_rows
+        num_cols = table.num_cols
+
+        if num_rows == 0 or num_cols == 0:
+            raise ValueError(f"Sheet '{sheet_name}' has no data")
+
+        # Get headers (first row)
+        headers = []
+        for col in range(num_cols):
+            cell = table.cell(0, col)
+            headers.append(str(cell.value) if cell.value is not None else f"Column{col+1}")
+
+        # Get data rows
+        for row in range(1, num_rows):
+            row_data = []
+            for col in range(num_cols):
+                cell = table.cell(row, col)
+                row_data.append(cell.value)
+            data.append(row_data)
+
+        # Create DataFrame
+        df = pd.DataFrame(data, columns=headers)
+
+        return df, sheet_names, sheet_name
+
+    finally:
+        # Clean up temporary file
+        import os
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 def clean_dataframe_for_display(df):
     """Clean DataFrame data types to prevent PyArrow serialization errors."""
     if df is None or df.empty:
@@ -291,41 +383,71 @@ def pdf_label_numbering_tool():
         
         with tab1:
             st.info("💡 Upload your processed run sheet with stop numbers and order numbers")
+
+            pdf_file_types = ['csv', 'xlsx', 'xls']
+            if NUMBERS_SUPPORT:
+                pdf_file_types.append('numbers')
+
             driver_file = st.file_uploader(
                 "Choose your driver run file",
-                type=['csv', 'xlsx', 'xls'],
+                type=pdf_file_types,
                 key="pdf_driver_upload",
-                help="Excel file with stop orders and order reference numbers"
+                help="CSV, Excel, or Numbers file with stop orders and order reference numbers"
             )
-            
+
             if driver_file:
                 try:
                     if driver_file.name.endswith('.csv'):
                         driver_df = pd.read_csv(driver_file)
+                    elif driver_file.name.endswith('.numbers'):
+                        if not NUMBERS_SUPPORT:
+                            st.error("❌ Numbers file support not available!")
+                            st.info("💡 Install the numbers-parser library: `pip install numbers-parser`")
+                            return
+
+                        st.info("📱 Reading Numbers file from Mac...")
+
+                        # First, get all sheet names
+                        _, sheet_names = read_numbers_file(driver_file)
+
+                        if len(sheet_names) == 1:
+                            st.info(f"Only one sheet found: **{sheet_names[0]}**")
+                            selected_sheet = sheet_names[0]
+                        else:
+                            st.write(f"**Found {len(sheet_names)} sheets**")
+                            selected_sheet = st.selectbox(
+                                "Select which sheet to use:",
+                                sheet_names,
+                                key="pdf_numbers_sheet_selector"
+                            )
+
+                        # Now read the selected sheet
+                        driver_df, _, _ = read_numbers_file(driver_file, sheet_name=selected_sheet)
+                        st.success(f"✅ Successfully loaded Numbers file from sheet: **{selected_sheet}**!")
                     else:
                         excel_file = pd.ExcelFile(driver_file)
                         sheet_name = excel_file.sheet_names[0]
-                        
+
                         best_df = None
                         best_unnamed_count = float('inf')
-                        
+
                         for header_row in range(0, 5):
                             temp_df = pd.read_excel(driver_file, sheet_name=sheet_name, header=header_row)
                             unnamed_count = sum(1 for col in temp_df.columns if str(col).startswith('Unnamed:'))
-                            
+
                             if unnamed_count < best_unnamed_count:
                                 best_unnamed_count = unnamed_count
                                 best_df = temp_df
-                            
+
                             if unnamed_count == 0:
                                 break
-                        
+
                         driver_df = best_df
-                    
+
                     driver_df = driver_df.dropna(how='all')
                     st.session_state.loaded_driver_df = driver_df
                     st.success(f"✅ Loaded run sheet with {len(driver_df)} stops")
-                    
+
                 except Exception as e:
                     st.error(f"❌ Error reading run sheet: {e}")
         
@@ -334,36 +456,46 @@ def pdf_label_numbering_tool():
             
             if saved_files:
                 st.info(f"💡 Found {len(saved_files)} saved driver run sheet(s)")
-                
-                # Show a preview of available files
-                with st.expander("📋 Preview Available Files", expanded=False):
-                    for file in saved_files[:5]:  # Show first 5 files
-                        display_name = format_saved_file_display(file)
-                        st.write(f"• {display_name}")
-                    if len(saved_files) > 5:
-                        st.write(f"• ... and {len(saved_files) - 5} more files")
-                
+
                 selected_saved_file = st.selectbox(
                     "Select a previously saved run sheet:",
                     saved_files,
                     format_func=format_saved_file_display,
                     help="Files are sorted by date (newest first). Driver names are extracted when available."
                 )
-                
-                if st.button("📂 Load This File", width="stretch"):
-                    try:
-                        driver_df = load_saved_file(selected_saved_file)
-                        driver_df = driver_df.dropna(how='all')
-                        st.session_state.loaded_driver_df = driver_df
-                        
-                        # Extract driver name from filename for display
-                        display_name = format_saved_file_display(selected_saved_file)
-                        clean_display = display_name.replace('🚛 ', '').replace('📄 ', '')
-                        
-                        st.success(f"✅ Loaded: **{clean_display}** ({len(driver_df)} stops)")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error loading saved file: {e}")
+
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    if st.button("📂 Load This File", use_container_width=True):
+                        try:
+                            driver_df = load_saved_file(selected_saved_file)
+                            driver_df = driver_df.dropna(how='all')
+                            st.session_state.loaded_driver_df = driver_df
+
+                            # Extract driver name from filename for display
+                            display_name = format_saved_file_display(selected_saved_file)
+                            clean_display = display_name.replace('🚛 ', '').replace('📄 ', '')
+
+                            st.success(f"✅ Loaded: **{clean_display}** ({len(driver_df)} stops)")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error loading saved file: {e}")
+
+                with col2:
+                    if st.button("🗑️ Delete File", use_container_width=True, type="secondary"):
+                        try:
+                            file_path = os.path.join(SAVED_FILES_DIR, selected_saved_file)
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                                display_name = format_saved_file_display(selected_saved_file)
+                                clean_display = display_name.replace('🚛 ', '').replace('📄 ', '')
+                                st.success(f"✅ Deleted: **{clean_display}**")
+                                st.rerun()
+                            else:
+                                st.error("❌ File not found")
+                        except Exception as e:
+                            st.error(f"❌ Error deleting file: {e}")
             else:
                 st.warning("⚠️ No saved files found. Process a run sheet first in 'Driver Run Sheet Processor'")
     
@@ -384,82 +516,76 @@ def pdf_label_numbering_tool():
         st.markdown("---")
         
         st.subheader("3️⃣ Column Mapping")
-        
-        # Auto-detect columns if not previously set or if columns don't exist in current data
-        if (st.session_state.pdf_stop_column is None or 
+
+        # Auto-detect columns - prioritize exact matches for "Stop Order" and "Order Number"
+        if (st.session_state.pdf_stop_column is None or
             st.session_state.pdf_stop_column not in driver_df.columns or
-            st.session_state.pdf_order_column is None or 
+            st.session_state.pdf_order_column is None or
             st.session_state.pdf_order_column not in driver_df.columns):
-            
-            # Smart auto-detection for first time or when columns are missing
+
             stop_default = None
             order_default = None
-            
+            driver_default = None
+
+            # First pass: Look for exact column names
             for col in driver_df.columns:
-                col_lower = str(col).lower()
-                sample_values = driver_df[col].dropna().astype(str).head(5).tolist()
-                
-                # Detect stop numbers (should be small sequential numbers like 1,2,3,4,5)
-                if stop_default is None:
-                    try:
-                        numeric_values = []
-                        for v in sample_values:
-                            clean_v = str(v).strip()
-                            if clean_v.replace('.','').isdigit():
-                                numeric_values.append(float(clean_v))
-                        
-                        if len(numeric_values) >= 3:
-                            avg_val = sum(numeric_values) / len(numeric_values)
-                            max_val = max(numeric_values)
-                            # Stop numbers should be small (under 50) and sequential-ish
-                            if max_val < 50 and avg_val < 20 and ('stop' in col_lower or 'order' in col_lower):
-                                stop_default = col
-                    except:
-                        pass
-                
-                # Detect order reference (longer alphanumeric strings)
-                if order_default is None:
-                    if ('ref' in col_lower or 'order' in col_lower or 'number' in col_lower):
-                        # Check if values look like order numbers (longer strings)
-                        long_values = [v for v in sample_values if len(str(v).strip()) > 3]
-                        if len(long_values) >= 2:  # At least 2 samples with longer values
-                            order_default = col
-            
-            # Fallback logic if auto-detection didn't work
+                col_str = str(col)
+                col_lower = col_str.lower()
+
+                # Exact match for "Stop Order"
+                if stop_default is None and col_str == "Stop Order":
+                    stop_default = col
+
+                # Exact match for "Order Number"
+                if order_default is None and col_str == "Order Number":
+                    order_default = col
+
+                # Look for driver name column
+                if driver_default is None and ('driver' in col_lower or 'name' in col_lower):
+                    driver_default = col
+
+            # Second pass: Fuzzy matching if exact match not found
             if stop_default is None:
-                # Look for columns with small numeric values
                 for col in driver_df.columns:
-                    sample_values = driver_df[col].dropna().astype(str).head(5).tolist()
-                    try:
-                        numeric_values = [float(v) for v in sample_values if str(v).replace('.','').isdigit()]
-                        if len(numeric_values) >= 2:
-                            max_val = max(numeric_values)
-                            if max_val < 100:  # Likely stop numbers
-                                stop_default = col
-                                break
-                    except:
-                        continue
-                        
-                if stop_default is None:
-                    stop_default = driver_df.columns[0]
-            
+                    col_lower = str(col).lower()
+                    if 'stop' in col_lower and 'order' in col_lower:
+                        stop_default = col
+                        break
+
             if order_default is None:
-                # Find a column that's different from stop_default
                 for col in driver_df.columns:
-                    if col != stop_default:
+                    col_lower = str(col).lower()
+                    if 'order' in col_lower and 'number' in col_lower:
                         order_default = col
                         break
-                        
-                if order_default is None:
-                    order_default = driver_df.columns[min(len(driver_df.columns) - 1, 1)]
-                
+
+            # Final fallback: use first available columns
+            if stop_default is None:
+                stop_default = driver_df.columns[0] if len(driver_df.columns) > 0 else None
+
+            if order_default is None:
+                order_default = driver_df.columns[1] if len(driver_df.columns) > 1 else driver_df.columns[0]
+
             # Set the detected columns
             st.session_state.pdf_stop_column = stop_default
             st.session_state.pdf_order_column = order_default
-            
-            st.success(f"✅ **Auto-detected columns:** Stop Numbers = '{stop_default}', Order Reference = '{order_default}'")
+
+            # Auto-detect and set driver info if available
+            if driver_default and driver_default in driver_df.columns:
+                st.session_state.pdf_driver_column = driver_default
+                # Get the first driver name from the sheet
+                first_driver = driver_df[driver_default].dropna().iloc[0] if len(driver_df[driver_default].dropna()) > 0 else None
+                if first_driver:
+                    st.session_state.pdf_selected_driver = first_driver
+                    st.session_state.pdf_use_driver_filter = True
+
+            st.success(f"✅ **Detected:** Stop = '{stop_default}' | Order = '{order_default}'" +
+                      (f" | Driver = '{first_driver}'" if driver_default and first_driver else ""))
         else:
-            st.info(f"📌 **Using saved column mapping:** Stop Numbers = '{st.session_state.pdf_stop_column}', Order Reference = '{st.session_state.pdf_order_column}'")
+            info_text = f"📌 **Using:** Stop = '{st.session_state.pdf_stop_column}' | Order = '{st.session_state.pdf_order_column}'"
+            if st.session_state.pdf_use_driver_filter and st.session_state.pdf_selected_driver:
+                info_text += f" | Driver = '{st.session_state.pdf_selected_driver}'"
+            st.info(info_text)
         
         # Show current mapping with option to change
         with st.expander("🔧 Adjust Column Mapping (if needed)", expanded=False):
@@ -673,21 +799,51 @@ def pdf_label_numbering_tool():
                     output.seek(0)
                     
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
-                    
+
                     if unmatched_orders:
                         st.warning(f"⚠️ Could not match {len(unmatched_orders)} labels: {', '.join(unmatched_orders[:5])}")
                         st.info("💡 These will be marked with '?' - check if order numbers match exactly")
-                    
+
                     st.markdown("---")
-                    
+
+                    # Automatically open print preview in new tab
+                    pdf_b64 = base64.b64encode(output.getvalue()).decode()
+
+                    st.components.v1.html(f"""
+                        <script>
+                            // Automatically open PDF in new tab for printing
+                            var pdfWindow = window.open('', '_blank');
+                            var pdfData = atob('{pdf_b64}');
+                            var pdfArray = new Uint8Array(pdfData.length);
+                            for (var i = 0; i < pdfData.length; i++) {{
+                                pdfArray[i] = pdfData.charCodeAt(i);
+                            }}
+                            var pdfBlob = new Blob([pdfArray], {{type: 'application/pdf'}});
+                            var pdfUrl = URL.createObjectURL(pdfBlob);
+
+                            pdfWindow.location.href = pdfUrl;
+
+                            // Wait for PDF to load, then trigger print
+                            pdfWindow.onload = function() {{
+                                setTimeout(function() {{
+                                    pdfWindow.print();
+                                }}, 1000);
+                            }};
+                        </script>
+                    """, height=0)
+
+                    st.success("🖨️ Print preview opened automatically in new tab!")
+                    st.info("💡 If popup was blocked, click the button below:")
+
+                    # Backup download button in case popup was blocked
                     st.download_button(
-                        label="⬇️ Download Numbered Labels",
+                        label="📄 Download PDF (if popup blocked)",
                         data=output,
                         file_name=f"numbered_labels_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
-                        width="stretch"
+                        use_container_width=True
                     )
-                    
+
                     st.balloons()
                 
                 except Exception as e:
@@ -2029,17 +2185,57 @@ def file_processor_tool(tool_name):
 
     st.header(tool_name)
 
+    file_types = ['csv', 'xlsx', 'xls', 'zip']
+    if NUMBERS_SUPPORT:
+        file_types.append('numbers')
+
     uploaded_file = st.file_uploader(
-        f"**1. Upload your daily file** (CSV, Excel with multiple sheets, or ZIP containing these files) for the {tool_name}", 
-        type=['csv', 'xlsx', 'xls', 'zip']
+        f"**1. Upload your daily file** (CSV, Excel, Numbers, or ZIP containing these files) for the {tool_name}",
+        type=file_types
     )
 
     if uploaded_file is not None:
         try:
             df = None
             original_columns = []
-            
-            if uploaded_file.name.endswith(('.xlsx', '.xls')):
+
+            if uploaded_file.name.endswith('.numbers'):
+                try:
+                    if not NUMBERS_SUPPORT:
+                        st.error("❌ Numbers file support not available!")
+                        st.info("💡 Install the numbers-parser library: `pip install numbers-parser`")
+                        return
+
+                    st.info("📱 Reading Numbers file from Mac...")
+
+                    # First, get all sheet names
+                    _, sheet_names = read_numbers_file(uploaded_file)
+
+                    st.subheader(f"📊 Found {len(sheet_names)} sheet(s)")
+
+                    if len(sheet_names) == 1:
+                        st.info(f"Only one sheet found: **{sheet_names[0]}**")
+                        selected_sheet = sheet_names[0]
+                    else:
+                        selected_sheet = st.selectbox(
+                            "**Select which sheet to process:**",
+                            sheet_names,
+                            key=f"{tool_name}_numbers_sheet_selector"
+                        )
+
+                    st.write(f"**Selected sheet:** `{selected_sheet}`")
+
+                    # Now read the selected sheet
+                    df, _, _ = read_numbers_file(uploaded_file, sheet_name=selected_sheet)
+
+                    st.success(f"✅ Successfully loaded Numbers file!")
+
+                except Exception as numbers_error:
+                    st.error(f"❌ Error reading Numbers file: {numbers_error}")
+                    st.info("💡 **Tip:** Make sure your Numbers file has at least one table with data.")
+                    return
+
+            elif uploaded_file.name.endswith(('.xlsx', '.xls')):
                 try:
                     excel_file = pd.ExcelFile(uploaded_file)
                     sheet_names = excel_file.sheet_names
@@ -2333,11 +2529,8 @@ def file_processor_tool(tool_name):
 
                     with col1:
                         st.markdown("### 🖨️ Print Options")
-                        
 
                         if st.button("🖨️ Open Print Preview", type="primary", use_container_width=True, key="open_print_preview"):
-
-                        if st.button("🖨️ Open Print Preview", type="primary", width="stretch", key="open_print_preview"):
 
                             b64_html = base64.b64encode(print_html.encode()).decode()
                             
@@ -2468,124 +2661,471 @@ def file_processor_tool(tool_name):
 st.set_page_config(
     layout="wide",
     page_title="Business Automation Platform",
-    page_icon="⚙️"
+    page_icon="⚙️",
+    initial_sidebar_state="expanded"
 )
 
-# Apply time-based gradient theme
-gradients = get_time_based_gradient()
-
-# Custom CSS for time-based gradients and animations
-st.markdown(f"""
+# Modern Dark Theme CSS
+st.markdown("""
 <style>
-    /* Time-based gradient background */
-    .stApp {{
-        background: {gradients['background']};
-        animation: gradient-shift 15s ease infinite;
-        background-size: 200% 200%;
-    }}
+    /* Dark Theme Background */
+    .stApp {
+        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+        animation: gradient-shift 20s ease infinite;
+        background-size: 400% 400%;
+    }
 
-    @keyframes gradient-shift {{
-        0% {{ background-position: 0% 50%; }}
-        50% {{ background-position: 100% 50%; }}
-        100% {{ background-position: 0% 50%; }}
-    }}
+    @keyframes gradient-shift {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
 
-    /* Ambient orbs */
-    .stApp::before {{
+    /* Floating particles effect */
+    .stApp::before {
         content: '';
         position: fixed;
-        top: -10%;
-        left: -10%;
-        width: 500px;
-        height: 500px;
-        background: {gradients['orb1']};
-        border-radius: 50%;
-        filter: blur(80px);
-        opacity: 0.6;
-        animation: float-orb 20s ease-in-out infinite;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-image:
+            radial-gradient(circle at 20% 30%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+            radial-gradient(circle at 80% 70%, rgba(99, 102, 241, 0.3) 0%, transparent 50%),
+            radial-gradient(circle at 40% 80%, rgba(168, 85, 247, 0.2) 0%, transparent 50%);
+        filter: blur(40px);
         pointer-events: none;
         z-index: 0;
-    }}
+        animation: float 15s ease-in-out infinite;
+    }
 
-    .stApp::after {{
-        content: '';
-        position: fixed;
-        bottom: -10%;
-        right: -10%;
-        width: 500px;
-        height: 500px;
-        background: {gradients['orb2']};
-        border-radius: 50%;
-        filter: blur(80px);
-        opacity: 0.6;
-        animation: float-orb 25s ease-in-out infinite reverse;
-        pointer-events: none;
-        z-index: 0;
-    }}
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-20px); }
+    }
 
-    @keyframes float-orb {{
-        0%, 100% {{ transform: translate(0, 0) scale(1); }}
-        33% {{ transform: translate(30px, -30px) scale(1.1); }}
-        66% {{ transform: translate(-20px, 20px) scale(0.9); }}
-    }}
-
-    /* Ensure content is above the orbs */
-    .main .block-container {{
+    /* Main content container */
+    .main .block-container {
         position: relative;
         z-index: 1;
-        background: rgba(255, 255, 255, 0.7);
+        background: rgba(17, 24, 39, 0.7);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        padding: 2.5rem;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Sidebar Dark Theme */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1e1b4b 0%, #1f2937 100%);
+        border-right: 1px solid rgba(99, 102, 241, 0.3);
+    }
+
+    [data-testid="stSidebar"] > div:first-child {
+        background: linear-gradient(180deg, #1e1b4b 0%, #1f2937 100%);
+    }
+
+    /* Sidebar Title */
+    [data-testid="stSidebar"] h1 {
+        color: #ffffff;
+        font-size: 1.8rem !important;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 2rem;
+        text-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
+    }
+
+    /* Hide default radio buttons */
+    [data-testid="stSidebar"] [role="radiogroup"] {
+        gap: 0.75rem;
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);
+        border: 2px solid rgba(99, 102, 241, 0.3);
+        border-radius: 16px;
+        padding: 1.25rem 1rem;
+        margin-bottom: 0.75rem;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         backdrop-filter: blur(10px);
-        border-radius: 20px;
-        padding: 2rem;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    }}
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 1.05rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
 
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {{
-        background: rgba(255, 255, 255, 0.85);
-        backdrop-filter: blur(10px);
-        border-right: 1px solid rgba(255, 255, 255, 0.3);
-    }}
+    [data-testid="stSidebar"] [role="radiogroup"] label:hover {
+        transform: translateX(8px) scale(1.02);
+        border-color: rgba(99, 102, 241, 0.8);
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.4) 0%, rgba(168, 85, 247, 0.4) 100%);
+        box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+    }
 
-    [data-testid="stSidebar"] .css-1d391kg {{
-        background: rgba(255, 255, 255, 0.85);
-    }}
+    [data-testid="stSidebar"] [role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
+        background: rgba(99, 102, 241, 0.3);
+        border: 2px solid #6366f1;
+    }
 
-    /* Enhanced cards and containers */
-    div[data-testid="stExpander"] {{
-        background: rgba(255, 255, 255, 0.6);
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.4);
-    }}
+    [data-testid="stSidebar"] [role="radiogroup"] label[aria-checked="true"] {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        border-color: #8b5cf6;
+        box-shadow: 0 12px 40px rgba(99, 102, 241, 0.5);
+        transform: translateX(8px) scale(1.05);
+    }
 
-    /* Button enhancements */
-    .stButton>button {{
-        border-radius: 10px;
+    /* Custom colors for each tool */
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(1) {
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(1):hover,
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(1)[aria-checked="true"] {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        border-color: #3b82f6;
+        box-shadow: 0 12px 40px rgba(59, 130, 246, 0.5);
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(2) {
+        border-color: rgba(34, 197, 94, 0.5);
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(2):hover,
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(2)[aria-checked="true"] {
+        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        border-color: #22c55e;
+        box-shadow: 0 12px 40px rgba(34, 197, 94, 0.5);
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(3) {
+        border-color: rgba(251, 146, 60, 0.5);
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(3):hover,
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(3)[aria-checked="true"] {
+        background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+        border-color: #fb923c;
+        box-shadow: 0 12px 40px rgba(251, 146, 60, 0.5);
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(4) {
+        border-color: rgba(236, 72, 153, 0.5);
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(4):hover,
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(4)[aria-checked="true"] {
+        background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+        border-color: #ec4899;
+        box-shadow: 0 12px 40px rgba(236, 72, 153, 0.5);
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(5) {
+        border-color: rgba(168, 85, 247, 0.5);
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(5):hover,
+    [data-testid="stSidebar"] [role="radiogroup"] label:nth-child(5)[aria-checked="true"] {
+        background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+        border-color: #a855f7;
+        box-shadow: 0 12px 40px rgba(168, 85, 247, 0.5);
+    }
+
+    /* Headers */
+    h1, h2, h3 {
+        color: #ffffff !important;
+        text-shadow: 0 0 40px rgba(139, 92, 246, 0.5);
+    }
+
+    /* Text colors */
+    p, span, label, .stMarkdown {
+        color: #e5e7eb !important;
+    }
+
+    /* Buttons */
+    .stButton>button {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
         transition: all 0.3s ease;
-        border: none;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }}
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+    }
 
-    .stButton>button:hover {{
+    .stButton>button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-    }}
+        box-shadow: 0 8px 25px rgba(99, 102, 241, 0.6);
+        background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
+    }
 
-    /* Smooth transitions */
-    * {{
-        transition: background-color 0.3s ease;
-    }}
+    /* Secondary buttons (like Clear All Settings) */
+    .stButton>button[kind="secondary"],
+    button[kind="secondary"] {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.8) 0%, rgba(220, 38, 38, 0.8) 100%) !important;
+        color: white !important;
+        border: 1px solid rgba(239, 68, 68, 0.5) !important;
+    }
+
+    .stButton>button[kind="secondary"]:hover,
+    button[kind="secondary"]:hover {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        border-color: #ef4444 !important;
+    }
+
+    /* Input fields */
+    .stTextInput>div>div>input,
+    .stSelectbox>div>div>select,
+    .stTextArea>div>div>textarea {
+        background: rgba(31, 41, 55, 0.8);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 12px;
+        color: #ffffff;
+        padding: 0.75rem;
+    }
+
+    .stTextInput>div>div>input:focus,
+    .stSelectbox>div>div>select:focus,
+    .stTextArea>div>div>textarea:focus {
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    }
+
+    /* Alert boxes */
+    .stAlert {
+        background: rgba(31, 41, 55, 0.8);
+        border-radius: 12px;
+        border-left: 4px solid #6366f1;
+        backdrop-filter: blur(10px);
+    }
 
     /* Info boxes */
-    .stAlert {{
-        border-radius: 10px;
-        backdrop-filter: blur(5px);
-    }}
+    [data-testid="stSidebar"] .stAlert {
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 12px;
+        color: #e5e7eb;
+    }
 
-    /* Headers with subtle glow */
-    h1, h2, h3 {{
-        text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
-    }}
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(168, 85, 247, 0.3) 100%) !important;
+        border-radius: 12px !important;
+        border: 2px solid rgba(99, 102, 241, 0.5) !important;
+        color: #ffffff !important;
+        font-weight: 600;
+        padding: 1rem !important;
+    }
+
+    .streamlit-expanderHeader:hover {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.5) 0%, rgba(168, 85, 247, 0.5) 100%) !important;
+        border-color: rgba(99, 102, 241, 0.7) !important;
+    }
+
+    /* Expander when expanded (open state) */
+    details[open] .streamlit-expanderHeader {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.4) 0%, rgba(168, 85, 247, 0.4) 100%) !important;
+        border-radius: 12px 12px 0 0 !important;
+        border-bottom: none !important;
+        color: #ffffff !important;
+    }
+
+    details[open] summary {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.4) 0%, rgba(168, 85, 247, 0.4) 100%) !important;
+        color: #ffffff !important;
+    }
+
+    .streamlit-expanderHeader svg {
+        fill: #ffffff !important;
+    }
+
+    .streamlit-expanderHeader p,
+    .streamlit-expanderHeader span {
+        color: #ffffff !important;
+    }
+
+    /* Expander content */
+    div[data-testid="stExpander"] > div:last-child {
+        background: rgba(17, 24, 39, 0.8) !important;
+        border: 1px solid rgba(99, 102, 241, 0.2) !important;
+        border-radius: 0 0 12px 12px !important;
+        padding: 1rem !important;
+    }
+
+    /* Make sure expanded expander stays styled */
+    div[data-testid="stExpander"][open] {
+        background: transparent !important;
+    }
+
+    /* Dataframes */
+    .dataframe {
+        background: rgba(31, 41, 55, 0.6);
+        color: #ffffff;
+    }
+
+    /* File uploader */
+    [data-testid="stFileUploader"] {
+        background: rgba(31, 41, 55, 0.9) !important;
+        border: 2px dashed rgba(99, 102, 241, 0.6) !important;
+        border-radius: 12px;
+        padding: 2rem;
+    }
+
+    [data-testid="stFileUploader"] section {
+        background: rgba(31, 41, 55, 0.9) !important;
+        border: 2px dashed rgba(99, 102, 241, 0.5) !important;
+        border-radius: 12px;
+    }
+
+    [data-testid="stFileUploader"] section > div {
+        background: transparent !important;
+    }
+
+    /* File uploader text */
+    [data-testid="stFileUploader"] label,
+    [data-testid="stFileUploader"] small,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] span {
+        color: #ffffff !important;
+        font-weight: 500;
+    }
+
+    /* Drag and drop text */
+    [data-testid="stFileUploader"] button {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+
+    [data-testid="stFileUploader"] button:hover {
+        background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
+    }
+
+    /* File uploader inner area */
+    [data-testid="stFileUploadDropzone"] {
+        background: rgba(17, 24, 39, 0.8) !important;
+        border: 2px dashed rgba(99, 102, 241, 0.5) !important;
+        border-radius: 12px;
+    }
+
+    [data-testid="stFileUploadDropzone"] > div {
+        color: #ffffff !important;
+    }
+
+    [data-testid="stFileUploadDropzone"] span {
+        color: #e5e7eb !important;
+    }
+
+    [data-testid="stFileUploadDropzone"] button {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+        color: white !important;
+    }
+
+    /* Uploaded file info (filename display after upload) */
+    [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] {
+        color: #ffffff !important;
+    }
+
+    [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important;
+        background: rgba(99, 102, 241, 0.2) !important;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        border: 1px solid rgba(99, 102, 241, 0.4);
+    }
+
+    /* File uploader - uploaded file section */
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] {
+        background: rgba(99, 102, 241, 0.15) !important;
+        border: 1px solid rgba(99, 102, 241, 0.3) !important;
+        border-radius: 8px;
+        padding: 0.5rem;
+    }
+
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFileName"] {
+        color: #ffffff !important;
+        font-weight: 600;
+    }
+
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFileSize"] {
+        color: #9ca3af !important;
+    }
+
+    /* Delete button in file uploader */
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderDeleteBtn"] button {
+        background: rgba(239, 68, 68, 0.2) !important;
+        color: #f87171 !important;
+        border: 1px solid rgba(239, 68, 68, 0.4) !important;
+    }
+
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderDeleteBtn"] button:hover {
+        background: rgba(239, 68, 68, 0.3) !important;
+        border-color: #ef4444 !important;
+    }
+
+    /* Download buttons */
+    [data-testid="stDownloadButton"] button,
+    .stDownloadButton button {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+    }
+
+    [data-testid="stDownloadButton"] button:hover,
+    .stDownloadButton button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(99, 102, 241, 0.6);
+        background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
+    }
+
+    /* Specific styling for download button icons */
+    [data-testid="stDownloadButton"] button svg,
+    .stDownloadButton button svg {
+        fill: white !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(31, 41, 55, 0.6);
+        border-radius: 12px 12px 0 0;
+        color: #9ca3af;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+    }
+
+    /* Success/Error/Warning messages */
+    .stSuccess {
+        background: rgba(34, 197, 94, 0.15);
+        border-left: 4px solid #22c55e;
+    }
+
+    .stError {
+        background: rgba(239, 68, 68, 0.15);
+        border-left: 4px solid #ef4444;
+    }
+
+    .stWarning {
+        background: rgba(251, 146, 60, 0.15);
+        border-left: 4px solid #fb923c;
+    }
+
+    /* Divider */
+    hr {
+        border-color: rgba(99, 102, 241, 0.2);
+    }
 </style>
 """, unsafe_allow_html=True)
 

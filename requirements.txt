@@ -5,3 +5,4 @@ PyPDF2>=3.0.0
 reportlab>=4.0.0
 qrcode>=7.4.0
 Pillow>=10.0.0
+numbers-parser>=4.0.0
