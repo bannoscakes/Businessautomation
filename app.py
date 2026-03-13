@@ -749,7 +749,6 @@ def pdf_label_numbering_tool():
         if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
-                    writer = PdfWriter()
                     matched_count = 0
                     unmatched_orders = []
                     processed_pages = []
@@ -795,19 +794,29 @@ def pdf_label_numbering_tool():
                         overlay = PdfReader(packet)
                         page.merge_page(overlay.pages[0])
 
+                        # Save each completed page as its own standalone PDF bytes
+                        single_writer = PdfWriter()
+                        single_writer.add_page(page)
+                        page_bytes = io.BytesIO()
+                        single_writer.write(page_bytes)
+                        page_bytes.seek(0)
+
                         # Parse stop number for sorting (numeric sort)
                         try:
                             sort_key = int(stop_num)
                         except (ValueError, TypeError):
                             sort_key = float('inf')  # Unmatched "?" pages go to the end
 
-                        processed_pages.append((sort_key, stop_num, page))
+                        processed_pages.append((sort_key, page_bytes))
 
                     # Sort pages by stop/route number so they print in order
                     processed_pages.sort(key=lambda x: x[0])
 
-                    for _, _, page in processed_pages:
-                        writer.add_page(page)
+                    # Combine sorted pages into final PDF
+                    writer = PdfWriter()
+                    for _, page_bytes in processed_pages:
+                        sorted_reader = PdfReader(page_bytes)
+                        writer.add_page(sorted_reader.pages[0])
 
                     output = io.BytesIO()
                     writer.write(output)
