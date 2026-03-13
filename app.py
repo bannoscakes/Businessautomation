@@ -751,23 +751,20 @@ def pdf_label_numbering_tool():
                 try:
                     matched_count = 0
                     unmatched_orders = []
-                    processed_pages = []  # List of (stop_num, overlaid_page_bytes)
 
+                    # First pass: determine stop number for each page
+                    page_info = []  # List of (stop_num, page_index)
                     for page_idx, page in enumerate(reader.pages):
                         page_text = page.extract_text()
 
                         found_order = None
-                        # Try multiple matching strategies
                         for order_ref in order_to_stop.keys():
-                            # Exact match
                             if order_ref in page_text:
                                 found_order = order_ref
                                 break
-                            # Try without # if order_ref starts with #
                             elif order_ref.startswith('#') and order_ref[1:] in page_text:
                                 found_order = order_ref
                                 break
-                            # Try with # if order_ref doesn't start with #
                             elif not order_ref.startswith('#') and f"#{order_ref}" in page_text:
                                 found_order = order_ref
                                 break
@@ -778,6 +775,29 @@ def pdf_label_numbering_tool():
                         else:
                             stop_num = "?"
                             unmatched_orders.append(f"Page {page_idx + 1}")
+
+                        page_info.append((stop_num, page_idx))
+
+                    # Sort by stop number (numeric)
+                    page_info.sort(
+                        key=lambda item: (
+                            int(item[0]) if item[0].isdigit() else float('inf'),
+                            item[0]
+                        )
+                    )
+
+                    before_sort = [p[0] for p in [(s, i) for s, i in sorted(page_info, key=lambda x: x[1])]]
+                    after_sort = [p[0] for p in page_info]
+                    st.info(f"📄 Before sort: {before_sort}")
+                    st.info(f"📄 After sort: {after_sort}")
+
+                    # Second pass: re-read PDF and process pages in sorted order
+                    label_pdf.seek(0)
+                    fresh_reader = PdfReader(label_pdf)
+                    writer = PdfWriter()
+
+                    for stop_num, page_idx in page_info:
+                        page = fresh_reader.pages[page_idx]
 
                         # Create overlay with the stop number
                         packet = io.BytesIO()
@@ -793,33 +813,10 @@ def pdf_label_numbering_tool():
 
                         overlay = PdfReader(packet)
                         page.merge_page(overlay.pages[0])
-
-                        # Save each page as its own PDF bytes for independent sorting
-                        single_writer = PdfWriter()
-                        single_writer.add_page(page)
-                        single_buf = io.BytesIO()
-                        single_writer.write(single_buf)
-                        processed_pages.append((stop_num, single_buf.getvalue()))
-
-                    # Sort pages by stop number (numeric sort)
-                    processed_pages.sort(
-                        key=lambda item: (
-                            int(item[0]) if item[0].isdigit() else float('inf'),
-                            item[0]
-                        )
-                    )
-
-                    original_nums = [p[0] for p in processed_pages]
-                    st.info(f"📄 Final page order: {original_nums}")
-
-                    # Write sorted pages to final PDF
-                    final_writer = PdfWriter()
-                    for stop_num, page_bytes in processed_pages:
-                        page_reader = PdfReader(io.BytesIO(page_bytes))
-                        final_writer.add_page(page_reader.pages[0])
+                        writer.add_page(page)
 
                     output = io.BytesIO()
-                    final_writer.write(output)
+                    writer.write(output)
                     output.seek(0)
 
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
