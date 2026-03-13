@@ -752,10 +752,11 @@ def pdf_label_numbering_tool():
                     writer = PdfWriter()
                     matched_count = 0
                     unmatched_orders = []
-                    
+                    processed_pages = []
+
                     for page_idx, page in enumerate(reader.pages):
                         page_text = page.extract_text()
-                        
+
                         found_order = None
                         # Try multiple matching strategies
                         for order_ref in order_to_stop.keys():
@@ -771,34 +772,47 @@ def pdf_label_numbering_tool():
                             elif not order_ref.startswith('#') and f"#{order_ref}" in page_text:
                                 found_order = order_ref
                                 break
-                        
+
                         if found_order:
                             stop_num = order_to_stop[found_order]
                             matched_count += 1
                         else:
                             stop_num = "?"
                             unmatched_orders.append(f"Page {page_idx + 1}")
-                        
+
                         # Create overlay with the stop number
                         packet = io.BytesIO()
                         page_width = float(page.mediabox.width)
                         page_height = float(page.mediabox.height)
-                        
+
                         can = pdf_canvas.Canvas(packet, pagesize=(page_width, page_height))
                         can.setFont("Helvetica-Bold", font_size)
                         can.setFillColorRGB(*number_color)
                         can.drawString(x_position, page_height - y_offset, stop_num)
                         can.save()
                         packet.seek(0)
-                        
+
                         overlay = PdfReader(packet)
                         page.merge_page(overlay.pages[0])
+
+                        # Parse stop number for sorting (numeric sort)
+                        try:
+                            sort_key = int(stop_num)
+                        except (ValueError, TypeError):
+                            sort_key = float('inf')  # Unmatched "?" pages go to the end
+
+                        processed_pages.append((sort_key, stop_num, page))
+
+                    # Sort pages by stop/route number so they print in order
+                    processed_pages.sort(key=lambda x: x[0])
+
+                    for _, _, page in processed_pages:
                         writer.add_page(page)
-                    
+
                     output = io.BytesIO()
                     writer.write(output)
                     output.seek(0)
-                    
+
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
 
                     if unmatched_orders:
