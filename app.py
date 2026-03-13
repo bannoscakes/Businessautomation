@@ -752,7 +752,8 @@ def pdf_label_numbering_tool():
                     writer = PdfWriter()
                     matched_count = 0
                     unmatched_orders = []
-                    
+                    page_stop_numbers = []  # Track stop number per page for sorting later
+
                     for page_idx, page in enumerate(reader.pages):
                         page_text = page.extract_text()
                         
@@ -778,7 +779,9 @@ def pdf_label_numbering_tool():
                         else:
                             stop_num = "?"
                             unmatched_orders.append(f"Page {page_idx + 1}")
-                        
+
+                        page_stop_numbers.append(stop_num)
+
                         # Create overlay with the stop number
                         packet = io.BytesIO()
                         page_width = float(page.mediabox.width)
@@ -798,7 +801,25 @@ def pdf_label_numbering_tool():
                     output = io.BytesIO()
                     writer.write(output)
                     output.seek(0)
-                    
+
+                    # Post-process: sort the finished PDF pages by stop number
+                    sorted_indices = sorted(
+                        range(len(page_stop_numbers)),
+                        key=lambda i: (
+                            int(page_stop_numbers[i]) if page_stop_numbers[i].isdigit() else float('inf'),
+                            page_stop_numbers[i]
+                        )
+                    )
+                    # Only re-sort if order actually changed
+                    if sorted_indices != list(range(len(page_stop_numbers))):
+                        sorted_writer = PdfWriter()
+                        numbered_pdf = PdfReader(io.BytesIO(output.getvalue()))
+                        for idx in sorted_indices:
+                            sorted_writer.add_page(numbered_pdf.pages[idx])
+                        output = io.BytesIO()
+                        sorted_writer.write(output)
+                        output.seek(0)
+
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
 
                     if unmatched_orders:
