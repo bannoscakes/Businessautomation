@@ -749,14 +749,13 @@ def pdf_label_numbering_tool():
         if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
-                    writer = PdfWriter()
                     matched_count = 0
                     unmatched_orders = []
-                    page_stop_numbers = []  # Track stop number per page for sorting later
+                    processed_pages = []  # List of (stop_num, overlaid_page_bytes)
 
                     for page_idx, page in enumerate(reader.pages):
                         page_text = page.extract_text()
-                        
+
                         found_order = None
                         # Try multiple matching strategies
                         for order_ref in order_to_stop.keys():
@@ -772,7 +771,7 @@ def pdf_label_numbering_tool():
                             elif not order_ref.startswith('#') and f"#{order_ref}" in page_text:
                                 found_order = order_ref
                                 break
-                        
+
                         if found_order:
                             stop_num = order_to_stop[found_order]
                             matched_count += 1
@@ -780,48 +779,47 @@ def pdf_label_numbering_tool():
                             stop_num = "?"
                             unmatched_orders.append(f"Page {page_idx + 1}")
 
-                        page_stop_numbers.append(stop_num)
-
                         # Create overlay with the stop number
                         packet = io.BytesIO()
                         page_width = float(page.mediabox.width)
                         page_height = float(page.mediabox.height)
-                        
+
                         can = pdf_canvas.Canvas(packet, pagesize=(page_width, page_height))
                         can.setFont("Helvetica-Bold", font_size)
                         can.setFillColorRGB(*number_color)
                         can.drawString(x_position, page_height - y_offset, stop_num)
                         can.save()
                         packet.seek(0)
-                        
+
                         overlay = PdfReader(packet)
                         page.merge_page(overlay.pages[0])
-                        writer.add_page(page)
-                    
-                    output = io.BytesIO()
-                    writer.write(output)
-                    output.seek(0)
 
-                    # Post-process: sort the finished PDF pages by stop number
-                    sorted_indices = sorted(
-                        range(len(page_stop_numbers)),
-                        key=lambda i: (
-                            int(page_stop_numbers[i]) if page_stop_numbers[i].isdigit() else float('inf'),
-                            page_stop_numbers[i]
+                        # Save each page as its own PDF bytes for independent sorting
+                        single_writer = PdfWriter()
+                        single_writer.add_page(page)
+                        single_buf = io.BytesIO()
+                        single_writer.write(single_buf)
+                        processed_pages.append((stop_num, single_buf.getvalue()))
+
+                    # Sort pages by stop number (numeric sort)
+                    processed_pages.sort(
+                        key=lambda item: (
+                            int(item[0]) if item[0].isdigit() else float('inf'),
+                            item[0]
                         )
                     )
-                    original_order = [page_stop_numbers[i] for i in range(len(page_stop_numbers))]
-                    sorted_order = [page_stop_numbers[i] for i in sorted_indices]
-                    st.info(f"📄 Original order: {original_order}")
-                    st.info(f"📄 Sorted order: {sorted_order}")
 
-                    sorted_writer = PdfWriter()
-                    pdf_bytes = output.getvalue()
-                    numbered_pdf = PdfReader(io.BytesIO(pdf_bytes))
-                    for idx in sorted_indices:
-                        sorted_writer.add_page(numbered_pdf.pages[idx])
+                    original_nums = [p[0] for p in processed_pages]
+                    st.info(f"📄 Final page order: {original_nums}")
+
+                    # Write sorted pages to final PDF
+                    final_writer = PdfWriter()
+                    for stop_num, page_bytes in processed_pages:
+                        page_reader = PdfReader(io.BytesIO(page_bytes))
+                        final_writer.add_page(page_reader.pages[0])
+
                     output = io.BytesIO()
-                    sorted_writer.write(output)
+                    final_writer.write(output)
                     output.seek(0)
 
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
