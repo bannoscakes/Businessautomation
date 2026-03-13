@@ -742,110 +742,64 @@ def pdf_label_numbering_tool():
         st.markdown("---")
         
         st.subheader("5️⃣ Process Labels")
-
+        
         reader = PdfReader(label_pdf)
         st.write(f"**📄 Found {len(reader.pages)} label(s) in PDF**")
-
-        # Diagnostic: Show what the PDF text looks like vs order numbers
-        with st.expander("🔎 Debug: PDF Text vs Order Numbers"):
-            sample_orders = list(order_to_stop.keys())[:5]
-            st.write(f"**Sample order refs from spreadsheet:** {sample_orders}")
-
-            for pidx in range(min(3, len(reader.pages))):
-                sample_text = reader.pages[pidx].extract_text()
-                if sample_text:
-                    st.write(f"**Page {pidx + 1} text (first 500 chars):**")
-                    st.code(sample_text[:500])
-                else:
-                    st.warning(f"Page {pidx + 1}: No text extracted (None/empty)")
-
-            # Reset reader after diagnostic
-            label_pdf.seek(0)
-            reader = PdfReader(label_pdf)
-
+        
         if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
+                    writer = PdfWriter()
                     matched_count = 0
                     unmatched_orders = []
-
-                    # Pass 1: Match each page to its stop number
-                    page_matches = []
+                    
                     for page_idx, page in enumerate(reader.pages):
-                        page_text = page.extract_text() or ""
-
+                        page_text = page.extract_text()
+                        
                         found_order = None
+                        # Try multiple matching strategies
                         for order_ref in order_to_stop.keys():
+                            # Exact match
                             if order_ref in page_text:
                                 found_order = order_ref
                                 break
+                            # Try without # if order_ref starts with #
                             elif order_ref.startswith('#') and order_ref[1:] in page_text:
                                 found_order = order_ref
                                 break
+                            # Try with # if order_ref doesn't start with #
                             elif not order_ref.startswith('#') and f"#{order_ref}" in page_text:
                                 found_order = order_ref
                                 break
-
+                        
                         if found_order:
                             stop_num = order_to_stop[found_order]
                             matched_count += 1
-                            try:
-                                sort_key = int(stop_num)
-                            except (ValueError, TypeError):
-                                sort_key = float('inf')
                         else:
                             stop_num = "?"
-                            sort_key = float('inf')
                             unmatched_orders.append(f"Page {page_idx + 1}")
-
-                        page_matches.append((sort_key, stop_num, page_idx))
-
-                    # Sort by stop number
-                    page_matches.sort(key=lambda x: x[0])
-
-                    # Pass 2: Build final PDF in sorted order
-                    label_pdf.seek(0)
-                    pdf_bytes = label_pdf.read()
-                    writer = PdfWriter()
-                    for _, stop_num, original_page_idx in page_matches:
-                        # Create fully independent reader from bytes copy
-                        fresh_reader = PdfReader(io.BytesIO(pdf_bytes))
-                        page = fresh_reader.pages[original_page_idx]
-
+                        
                         # Create overlay with the stop number
                         packet = io.BytesIO()
                         page_width = float(page.mediabox.width)
                         page_height = float(page.mediabox.height)
-
+                        
                         can = pdf_canvas.Canvas(packet, pagesize=(page_width, page_height))
                         can.setFont("Helvetica-Bold", font_size)
                         can.setFillColorRGB(*number_color)
                         can.drawString(x_position, page_height - y_offset, stop_num)
                         can.save()
                         packet.seek(0)
-
+                        
                         overlay = PdfReader(packet)
                         page.merge_page(overlay.pages[0])
                         writer.add_page(page)
-
+                    
                     output = io.BytesIO()
                     writer.write(output)
                     output.seek(0)
-
+                    
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
-
-                    # Show sorting result details
-                    with st.expander("🔎 Debug: Sort Results"):
-                        sort_details = []
-                        for sort_key, stop_num, orig_idx in page_matches:
-                            sort_details.append({
-                                "Original Page": orig_idx + 1,
-                                "Stop #": stop_num,
-                                "Sort Key": sort_key
-                            })
-                        sort_df = pd.DataFrame(sort_details)
-                        st.write("**Pages in sorted order:**")
-                        st.dataframe(sort_df, use_container_width=True)
 
                     if unmatched_orders:
                         st.warning(f"⚠️ Could not match {len(unmatched_orders)} labels: {', '.join(unmatched_orders[:5])}")
