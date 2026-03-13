@@ -704,7 +704,7 @@ def pdf_label_numbering_tool():
         col_d, col_e = st.columns(2)
         
         with col_d:
-            color_options = ["Red", "Black", "Blue", "Green", "Orange"]
+            color_options = ["Red", "Black", "Blue", "Green", "Orange", "Pink"]
             default_color_index = color_options.index(saved_settings["color"]) if saved_settings["color"] in color_options else 0
             
             color_choice = st.selectbox(
@@ -717,7 +717,8 @@ def pdf_label_numbering_tool():
                 "Black": (0, 0, 0),
                 "Blue": (0, 0, 1),
                 "Green": (0, 0.5, 0),
-                "Orange": (1, 0.5, 0)
+                "Orange": (0.8, 0.4, 0),
+                "Pink": (1, 0.41, 0.71)
             }
             number_color = color_map[color_choice]
         
