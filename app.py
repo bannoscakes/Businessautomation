@@ -742,10 +742,27 @@ def pdf_label_numbering_tool():
         st.markdown("---")
         
         st.subheader("5️⃣ Process Labels")
-        
+
         reader = PdfReader(label_pdf)
         st.write(f"**📄 Found {len(reader.pages)} label(s) in PDF**")
-        
+
+        # Diagnostic: Show what the PDF text looks like vs order numbers
+        with st.expander("🔎 Debug: PDF Text vs Order Numbers"):
+            sample_orders = list(order_to_stop.keys())[:5]
+            st.write(f"**Sample order refs from spreadsheet:** {sample_orders}")
+
+            for pidx in range(min(3, len(reader.pages))):
+                sample_text = reader.pages[pidx].extract_text()
+                if sample_text:
+                    st.write(f"**Page {pidx + 1} text (first 500 chars):**")
+                    st.code(sample_text[:500])
+                else:
+                    st.warning(f"Page {pidx + 1}: No text extracted (None/empty)")
+
+            # Reset reader after diagnostic
+            label_pdf.seek(0)
+            reader = PdfReader(label_pdf)
+
         if st.button("🎨 Add Route Numbers to Labels", type="primary", width="stretch"):
             with st.spinner("Processing labels..."):
                 try:
@@ -755,7 +772,7 @@ def pdf_label_numbering_tool():
                     # Pass 1: Match each page to its stop number
                     page_matches = []
                     for page_idx, page in enumerate(reader.pages):
-                        page_text = page.extract_text()
+                        page_text = page.extract_text() or ""
 
                         found_order = None
                         for order_ref in order_to_stop.keys():
@@ -816,6 +833,19 @@ def pdf_label_numbering_tool():
                     output.seek(0)
 
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
+
+                    # Show sorting result details
+                    with st.expander("🔎 Debug: Sort Results"):
+                        sort_details = []
+                        for sort_key, stop_num, orig_idx in page_matches:
+                            sort_details.append({
+                                "Original Page": orig_idx + 1,
+                                "Stop #": stop_num,
+                                "Sort Key": sort_key
+                            })
+                        sort_df = pd.DataFrame(sort_details)
+                        st.write("**Pages in sorted order:**")
+                        st.dataframe(sort_df, use_container_width=True)
 
                     if unmatched_orders:
                         st.warning(f"⚠️ Could not match {len(unmatched_orders)} labels: {', '.join(unmatched_orders[:5])}")
