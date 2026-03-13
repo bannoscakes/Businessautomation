@@ -805,11 +805,11 @@ def pdf_label_numbering_tool():
 
                     # Pass 2: Build final PDF in sorted order
                     label_pdf.seek(0)
+                    pdf_bytes = label_pdf.read()
                     writer = PdfWriter()
                     for _, stop_num, original_page_idx in page_matches:
-                        # Re-read the original page fresh each time
-                        label_pdf.seek(0)
-                        fresh_reader = PdfReader(label_pdf)
+                        # Create fully independent reader from bytes copy
+                        fresh_reader = PdfReader(io.BytesIO(pdf_bytes))
                         page = fresh_reader.pages[original_page_idx]
 
                         # Create overlay with the stop number
