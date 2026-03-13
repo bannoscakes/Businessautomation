@@ -810,15 +810,19 @@ def pdf_label_numbering_tool():
                             page_stop_numbers[i]
                         )
                     )
-                    # Only re-sort if order actually changed
-                    if sorted_indices != list(range(len(page_stop_numbers))):
-                        sorted_writer = PdfWriter()
-                        numbered_pdf = PdfReader(io.BytesIO(output.getvalue()))
-                        for idx in sorted_indices:
-                            sorted_writer.add_page(numbered_pdf.pages[idx])
-                        output = io.BytesIO()
-                        sorted_writer.write(output)
-                        output.seek(0)
+                    original_order = [page_stop_numbers[i] for i in range(len(page_stop_numbers))]
+                    sorted_order = [page_stop_numbers[i] for i in sorted_indices]
+                    st.info(f"📄 Original order: {original_order}")
+                    st.info(f"📄 Sorted order: {sorted_order}")
+
+                    sorted_writer = PdfWriter()
+                    pdf_bytes = output.getvalue()
+                    numbered_pdf = PdfReader(io.BytesIO(pdf_bytes))
+                    for idx in sorted_indices:
+                        sorted_writer.add_page(numbered_pdf.pages[idx])
+                    output = io.BytesIO()
+                    sorted_writer.write(output)
+                    output.seek(0)
 
                     st.success(f"✅ Successfully matched {matched_count} out of {len(reader.pages)} labels!")
 
